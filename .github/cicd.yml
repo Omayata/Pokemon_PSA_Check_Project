@@ -1,0 +1,37 @@
+name: MLOps CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ] # ใช้งาน Branch และ PR[cite: 3, 7]
+
+jobs:
+  test-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pytest flake8
+        
+    - name: 1. Code Quality Check (ตรวจสอบคุณภาพโค้ด)
+      run: |
+        flake8 src/ app/ models/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        
+    - name: 2. Data Validation & Unit Tests (ตรวจสอบความถูกต้องของข้อมูลและเทสต์)
+      # สมมติว่ามีไฟล์เทสต์ที่ส่งข้อมูลเสียเข้าไปเพื่อให้ระบบแจ้งเตือน[cite: 3]
+      run: |
+        pytest tests/test_data_validation.py 
+        
+    - name: 3. Model Quality Check (ตรวจสอบเกณฑ์คุณภาพโมเดล)
+      # รันสคริปต์เพื่อดึงค่า Gating Metric มาตรวจสอบก่อนอนุญาตให้ Deploy[cite: 5, 6]
+      run: |
+        python tests/check_model_metrics.py
