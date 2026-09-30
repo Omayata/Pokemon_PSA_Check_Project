@@ -1,0 +1,25 @@
+# secrets
+.env
+
+# ข้อมูลและผลลัพธ์ขนาดใหญ่ (ดาวน์โหลด/สร้างใหม่ได้จาก pipeline)
+/data/
+/runs/
+/mlruns/
+/mlflow_data/
+/logs/
+*.pt
+*.onnx
+
+# reports: เก็บเฉพาะหลักฐานที่ใช้ใน CI / รายงาน
+reports/*
+!reports/.gitkeep
+!reports/candidate_metrics.json
+!reports/load_test.json
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/

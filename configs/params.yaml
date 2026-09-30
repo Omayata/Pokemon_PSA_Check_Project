@@ -1,0 +1,105 @@
+# ค่าตั้งทั้งหมดของระบบอยู่ที่ไฟล์เดียว: ใช้ร่วมกันทั้ง pipeline, training, serving และ CI
+# เปลี่ยนค่าที่นี่ที่เดียว -> ทุกส่วนเห็นค่าเดียวกัน (กัน Training-Serving Skew)
+
+seed: 42
+
+data:
+  roboflow_workspace: group-6-major-project
+  roboflow_project: card-grader
+  roboflow_version: 5          # pin เวอร์ชันข้อมูล -> ดาวน์โหลดซ้ำได้ข้อมูลเดิมทุกครั้ง
+  export_format: yolov8        # dataset นี้เป็น object detection ต้องใช้ yolov8 ไม่ใช่ folder
+  raw_dir: data/raw
+  processed_dir: data/processed
+  splits: [train, valid, test]
+
+schema:
+  # ชื่อ class ที่คาดหวัง (เทียบแบบ normalize: ตัวเล็ก ไม่สนช่องว่าง/ขีด)
+  # ถ้าชื่อใน data.yaml ของ Roboflow ต่างจากนี้ ให้แก้ตรงนี้ให้ตรง
+  expected_classes: [card, corner wear, edge wear, scratch]
+  min_images_per_split: {train: 100, valid: 20, test: 20}
+  min_instances_per_class: 10  # ใน train set
+  min_image_side: 200
+  max_upload_mb: 10
+  allowed_formats: [JPEG, PNG, WEBP]
+  aspect_ratio_range: [0.4, 2.5]
+  min_pixel_std: 5.0           # ต่ำกว่านี้ = ภาพสีเดียว/ภาพเปล่า
+
+transform:
+  max_side: 1280               # ย่อภาพให้ด้านยาวไม่เกินค่านี้ (ใช้ทั้งตอน train และ serve)
+  jpeg_quality: 95
+
+train:
+  imgsz: 640
+  device: cpu                  # เปลี่ยนเป็น 0 ถ้ามี GPU
+  workers: 2
+  patience: 15
+  mlflow_experiment: pokemon-psa-grader
+  quick_epochs: 3              # ใช้กับ --quick เพื่อทดสอบ pipeline เร็ว ๆ
+  experiments:
+    - name: baseline_yolov8n_noaug
+      model: yolov8n.pt
+      epochs: 40
+      batch: 16
+      lr0: 0.01
+      augment: {mosaic: 0.0, fliplr: 0.0, hsv_h: 0.0, hsv_s: 0.0, hsv_v: 0.0, scale: 0.0, translate: 0.0}
+    - name: yolov8n_aug
+      model: yolov8n.pt
+      epochs: 40
+      batch: 16
+      lr0: 0.01
+      augment: {mosaic: 1.0, fliplr: 0.5, hsv_v: 0.5, scale: 0.5, degrees: 5.0}
+    - name: yolov8s_aug
+      model: yolov8s.pt
+      epochs: 40
+      batch: 16
+      lr0: 0.005
+      augment: {mosaic: 1.0, fliplr: 0.5, hsv_v: 0.5, scale: 0.5, degrees: 5.0}
+  selection_metric: map50      # เลือกโมเดลจาก valid set (test เก็บไว้ใช้ gate อย่างเดียว)
+
+# Optimizing metric = map50 (ยิ่งสูงยิ่งดี)
+# Gating metrics = เกณฑ์ที่ต้องผ่านทุกข้อจึงจะขึ้น production
+gates:
+  min_map50: 0.50
+  min_recall_scratch: 0.40
+  max_p95_latency_ms: 300      # latency ของโมเดล (ไม่รวม network) บน CPU
+  max_model_size_mb: 50
+  max_regression_vs_champion: 0.01   # map50 แย่กว่า champion ได้ไม่เกินเท่านี้
+
+slo:
+  p50_latency_ms: 200
+  p95_latency_ms: 500          # end-to-end ที่ API
+  min_throughput_rps: 5
+  max_error_rate: 0.01
+  availability: 0.99
+
+registry:
+  model_name: pokemon-psa-grader
+  champion_alias: champion
+  previous_alias: previous
+
+grader:
+  # Stage 2: แปลงตำหนิที่ detect ได้ -> คะแนน 1-10 -> ช่วงเกรด PSA
+  min_confidence: 0.35
+  card_class: card
+  defect_weights: {scratch: 1.5, edge wear: 1.0, corner wear: 1.2}
+  area_weight: 20.0            # ตำหนิใหญ่ (สัดส่วนต่อพื้นที่การ์ด) ถูกหักมากขึ้น
+  bands:                       # เรียงจากดีไปแย่: [คะแนนขั้นต่ำ, ชื่อช่วง]
+    - [9.0, "PSA 9-10"]
+    - [7.0, "PSA 7-8"]
+    - [5.0, "PSA 5-6"]
+    - [0.0, "PSA 1-4"]
+
+monitoring:
+  log_dir: logs
+  window_size: 200             # จำนวน request ล่าสุดที่ใช้เทียบ
+  min_samples: 30
+  psi_threshold: 0.2           # PSI > 0.2 = distribution เปลี่ยนมาก
+  ks_pvalue: 0.01
+  data_features: [brightness, contrast, sharpness, aspect_ratio]
+  prediction_features: [score, n_defects]
+  concept_agreement_drop: 0.15 # อัตราตรงกับผล PSA จริงลดลงเกินนี้ = concept drift
+
+retrain:
+  on_data_drift: true
+  on_concept_drift: true
+  max_model_age_days: 30
