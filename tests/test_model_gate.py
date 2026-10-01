@@ -24,3 +24,23 @@ def test_regression_vs_champion_blocks(params):
     decision = check_gates(candidate(f1=0.80), champion_f1=0.95, gates=params["gates"])
     assert not decision["passed"]
     assert not decision["checks"]["no_regression_vs_champion"]["passed"]
+
+
+def test_ci_gate_script_exit_codes(tmp_path, monkeypatch):
+    """scripts/check_model_gate.py ที่ CI เรียก: ผ่าน = 0, ไม่ผ่าน = 1, ไม่มีไฟล์ = 0 (หรือ 1 ถ้า --strict)"""
+    import json
+    import sys
+
+    from scripts import check_model_gate
+
+    def run(*args):
+        monkeypatch.setattr(sys, "argv", ["check_model_gate.py", *args])
+        return check_model_gate.main()
+
+    good, bad = tmp_path / "good.json", tmp_path / "bad.json"
+    good.write_text(json.dumps(candidate()))
+    bad.write_text(json.dumps(candidate(precision=0.5)))
+    assert run("--metrics", str(good)) == 0
+    assert run("--metrics", str(bad)) == 1
+    assert run("--metrics", str(tmp_path / "missing.json")) == 0
+    assert run("--metrics", str(tmp_path / "missing.json"), "--strict") == 1
