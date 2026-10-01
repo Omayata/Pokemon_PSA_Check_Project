@@ -97,7 +97,7 @@ pip install -r requirements-dev.txt -c constraints.txt
 |---|---|
 | ข้อมูลเสีย -> pipeline หยุด + alert | `python scripts/make_bad_data.py dataset` |
 | ภาพเสีย -> API ตอบ 422 พร้อมเหตุผล | `python scripts/make_bad_data.py api` |
-| Latency p50/p95 + throughput เทียบ SLO | `python scripts/load_test.py --n 200 --concurrency 8` |
+| Latency p50/p95 + throughput เทียบ SLO | `python scripts/load_test.py --n 200` |
 | Data drift (ภาพมืด) | `python scripts/simulate_drift.py data --kind dark --n 100` |
 | Concept drift (มาตรฐานสภาพดีเข้มขึ้น) | `python scripts/simulate_drift.py concept --n 120` |
 | ตรวจ drift -> retrain อัตโนมัติ | `docker compose run --rm trainer python -m pipelines.flow monitor` |

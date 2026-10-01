@@ -18,7 +18,7 @@
 | **Link model -> business** | recall สูง -> การ์ดมีตำหนิหลุดไปส่งเกรดน้อย = ประหยัดค่าเกรด; precision/specificity สูง -> ไม่ตีการ์ดดีว่าเสีย = ผู้ขายไม่ตั้งราคาต่ำเกินจริง |
 | **Cost of errors** | False negative (การ์ดมีตำหนิแต่บอก good): ผู้ใช้เสียค่าเกรดฟรี/ผู้ซื้อได้ของไม่ตรงปก **(แย่กว่า -> recall เป็นเกณฑ์หลัก)** / False positive (การ์ดดีแต่บอก defective): ผู้ขายตั้งราคาต่ำหรือไม่ส่งเกรดการ์ดดี |
 | **Serving** | Real-time REST API `/predict` (ผู้ใช้รอผล) + `/predict/batch` สูงสุด 16 ภาพสำหรับร้านค้า (หน้า+หลัง หรือหลายใบ) |
-| **SLO** | p50 <= 200 ms, p95 <= 500 ms (end-to-end ที่ API), throughput >= 5 req/s บน CPU 1 เครื่อง, error rate <= 1%, availability 99% |
+| **SLO** | ต่อ 1 instance (CPU) ที่โหลดไม่เกิน 4 request พร้อมกัน: p50 <= 400 ms, p95 <= 500 ms (end-to-end ที่ API), throughput >= 5 req/s, error rate <= 1%, availability 99% / โหลดมากกว่านี้ scale ด้วยการเพิ่ม instance (1 instance รับได้ ~11.5 req/s) |
 | **Data drift (expected)** | กล้อง/แสงเปลี่ยน (มืด เบลอ แฟลช), ถ่ายผ่านซองพลาสติก, ถ่ายเอียง/มีพื้นหลัง, ชุดการ์ดใหม่ที่ลายต่างไป |
 | **Concept drift (expected)** | มาตรฐาน "สภาพดี" เข้มขึ้น (ตำหนิเล็กที่เคยยอมรับได้กลายเป็นตำหนิ), ตำหนิแบบใหม่ที่โมเดลไม่รู้จัก (เช่นรอยพับ) -> ภาพหน้าตาเดิมแต่ label จริงเปลี่ยน |
 | **Monitoring** | ระบบ: latency, error rate, API up, model loaded / คุณภาพ: สัดส่วน good/defective ที่ทาย, distribution ของ defect_probability, อัตรา input ที่ถูกปฏิเสธ, PSI ของ input, agreement กับ feedback |

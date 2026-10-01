@@ -23,7 +23,7 @@ lint:
 	ruff check .
 
 load-test:
-	python scripts/load_test.py --n 200 --concurrency 8
+	python scripts/load_test.py --n 200
 
 drift-data:
 	python scripts/simulate_drift.py data --kind dark --n 100
