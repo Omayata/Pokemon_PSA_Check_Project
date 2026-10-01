@@ -1,6 +1,6 @@
 {
   "uid": "psa-grader",
-  "title": "Pokemon PSA Grader",
+  "title": "Pokemon Card Condition",
   "schemaVersion": 39,
   "version": 1,
   "refresh": "10s",
@@ -105,7 +105,7 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Agreement with real PSA",
+      "title": "Agreement with verified labels",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -236,7 +236,7 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Predicted PSA band",
+      "title": "Predicted verdict (good / defective)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -256,8 +256,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(psa_predicted_band_total[15m])) by (band)",
-          "legendFormat": "{{band}}",
+          "expr": "sum(increase(psa_predicted_verdict_total[15m])) by (verdict)",
+          "legendFormat": "{{verdict}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"

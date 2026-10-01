@@ -13,8 +13,8 @@ flowchart LR
 
     subgraph Train["Training (Prefect DAG)"]
         V2 -->|yes| T1[baseline yolov8n] & T2[yolov8n + aug] & T3[yolov8s + aug]
-        T1 & T2 & T3 --> SEL[select best<br/>by val mAP50]
-        SEL --> GATE{gating metrics<br/>on test set}
+        T1 & T2 & T3 --> SEL[select best<br/>by val F1, image level]
+        SEL --> GATE{gates on test set<br/>recall, precision, AUC,<br/>latency, size}
     end
 
     subgraph Registry["MLflow"]
@@ -29,7 +29,7 @@ flowchart LR
         API --> VAL{validate_upload}
         VAL -->|bad| E422[422 + reason]
         VAL -->|ok| TR[transform<br/>same code as training]
-        TR --> S1[Stage 1: YOLO<br/>detect defects] --> S2[Stage 2: grader<br/>score -> PSA band]
+        TR --> S1[Stage 1: YOLO<br/>detect defects] --> S2[Stage 2: classifier<br/>max defect conf >= threshold<br/>-> good / defective]
         S2 --> USER
         CH -->|load champion| API
         API -->|predictions.jsonl<br/>feedback.jsonl| LOGS[(logs)]

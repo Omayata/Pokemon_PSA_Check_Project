@@ -1,9 +1,12 @@
-"""ประเมินโมเดล: mAP ต่อ class, latency p50/p95 ของโมเดล และสร้าง reference stats สำหรับตรวจ drift"""
+"""ประเมินโมเดล: (1) ระดับภาพ good/defective = ตัวชี้วัดหลัก (2) mAP ต่อ class ของ detector (ข้อมูลประกอบ)
+(3) latency p50/p95 ของโมเดล และ (4) reference stats สำหรับตรวจ drift
+"""
 
 import time
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 from src.config import normalize_name, resolve_device
 from src.data.validate import IMAGE_EXTS
@@ -63,15 +66,66 @@ def measure_latency(predictor, image_paths: list[Path], max_side: int, n: int = 
     }
 
 
-def build_reference_stats(train_images: list[Path], valid_images: list[Path], predictor, max_side: int) -> dict:
-    """distribution อ้างอิงของ input (จาก train) และ output (จาก valid) สำหรับเทียบกับ production"""
+def image_labels(split_dir: Path, defect_classes: list[str]) -> tuple[list[Path], np.ndarray]:
+    """label ระดับภาพจาก label ของ YOLO: มีกรอบตำหนิอย่างน้อย 1 กรอบ = defective (1) ไม่งั้น good (0)"""
+    names = yaml.safe_load((split_dir.parent / "data.yaml").read_text(encoding="utf-8"))["names"]
+    names = list(names.values()) if isinstance(names, dict) else list(names)
+    wanted = {normalize_name(c) for c in defect_classes}
+    defect_ids = {i for i, n in enumerate(names) if normalize_name(n) in wanted}
+    paths = list_images(split_dir)
+    y = []
+    for p in paths:
+        lbl = split_dir / "labels" / f"{p.stem}.txt"
+        ids = {int(line.split()[0]) for line in lbl.read_text().splitlines() if line.strip()} if lbl.exists() else set()
+        y.append(int(bool(ids & defect_ids)))
+    return paths, np.array(y)
+
+
+def predict_images(predictor, paths: list[Path], max_side: int) -> list[dict]:
+    return [predictor.predict(load_image(p, max_side=max_side)) for p in paths]
+
+
+def roc_auc(y: np.ndarray, s: np.ndarray) -> float:
+    """ROC-AUC = โอกาสที่ภาพ defective ได้คะแนนสูงกว่าภาพ good (Mann-Whitney, เสมอนับครึ่ง)"""
+    pos, neg = s[y == 1], s[y == 0]
+    if len(pos) == 0 or len(neg) == 0:
+        return float("nan")
+    greater = (pos[:, None] > neg[None, :]).sum() + 0.5 * (pos[:, None] == neg[None, :]).sum()
+    return float(greater / (len(pos) * len(neg)))
+
+
+def binary_metrics(y: np.ndarray, s: np.ndarray, threshold: float) -> dict:
+    pred = s >= threshold
+    tp, fp = int((pred & (y == 1)).sum()), int((pred & (y == 0)).sum())
+    fn, tn = int((~pred & (y == 1)).sum()), int((~pred & (y == 0)).sum())
+    recall = tp / max(tp + fn, 1)
+    precision = tp / max(tp + fp, 1)
+    return {
+        "img_accuracy": (tp + tn) / max(len(y), 1),
+        "img_recall": recall,
+        "img_precision": precision,
+        "img_specificity": tn / max(tn + fp, 1),
+        "img_f1": 2 * precision * recall / max(precision + recall, 1e-9),
+        "img_roc_auc": roc_auc(y, s),
+        "img_tp": tp, "img_fp": fp, "img_fn": fn, "img_tn": tn,
+    }
+
+
+def tune_threshold(y: np.ndarray, s: np.ndarray) -> float:
+    """threshold ที่ให้ F1 สูงสุด (ถ้าเท่ากันเลือกค่าต่ำกว่า = recall สูงกว่า) -> ใช้กับ valid set เท่านั้น"""
+    candidates = np.round(np.arange(0.05, 0.96, 0.01), 2)
+    best = max(candidates, key=lambda t: (round(binary_metrics(y, s, t)["img_f1"], 6), -t))
+    return float(best)
+
+
+def build_reference_stats(train_images: list[Path], valid_results: list[dict], max_side: int) -> dict:
+    """distribution อ้างอิงของ input (จาก train) และ output (ผลทำนายบน valid) สำหรับเทียบกับ production"""
     data: dict[str, list[float]] = {}
     for p in train_images[:MAX_REFERENCE_SAMPLES]:
         for k, v in image_stats(load_image(p, max_side=max_side)).items():
             data.setdefault(k, []).append(v)
-    prediction: dict[str, list[float]] = {"score": [], "n_defects": []}
-    for p in valid_images[:MAX_REFERENCE_SAMPLES]:
-        result = predictor.predict(load_image(p, max_side=max_side))
-        prediction["score"].append(result["score"])
-        prediction["n_defects"].append(result["n_defects"])
+    prediction = {
+        "defect_probability": [r["defect_probability"] for r in valid_results],
+        "n_defects": [r["n_defects"] for r in valid_results],
+    }
     return {"data": data, "prediction": prediction}

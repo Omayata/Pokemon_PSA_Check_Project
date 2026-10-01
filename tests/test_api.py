@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from src.models.grader import Detection, grade
+from src.models.classifier import Detection, classify
 from tests.conftest import card_image, jpeg_bytes
 
 
@@ -15,7 +15,7 @@ class FakePredictor:
 
     def predict(self, img):
         dets = [Detection("Card", 0.9, (0, 0, *img.size)), Detection("Scratch", 0.8, (10, 10, 40, 40))]
-        return grade(dets, img.size, self.params["grader"])
+        return classify(dets, self.params["classifier"])
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def test_predict_ok_and_logged(client, tmp_path):
     r = client.post("/predict", files={"file": ("c.jpg", jpeg_bytes(card_image()), "image/jpeg")})
     assert r.status_code == 200
     body = r.json()
-    assert body["band"].startswith("PSA") and body["n_defects"] == 1
+    assert body["verdict"] == "defective" and body["n_defects"] == 1 and body["defect_probability"] == 0.8
     assert (tmp_path / "predictions.jsonl").read_text().count("\n") == 1
 
 
@@ -50,12 +50,12 @@ def test_batch_mixed(client):
              ("files", ("b.jpg", b"bad", "image/jpeg"))]
     body = client.post("/predict/batch", files=files).json()
     assert body["n"] == 2
-    assert "band" in body["results"][0] and body["results"][1]["status_code"] == 422
+    assert "verdict" in body["results"][0] and body["results"][1]["status_code"] == 422
 
 
-def test_feedback_validates_band(client):
-    assert client.post("/feedback", json={"request_id": "x", "true_band": "PSA 9-10"}).status_code == 200
-    assert client.post("/feedback", json={"request_id": "x", "true_band": "PSA 11"}).status_code == 422
+def test_feedback_validates_label(client):
+    assert client.post("/feedback", json={"request_id": "x", "true_label": "good"}).status_code == 200
+    assert client.post("/feedback", json={"request_id": "x", "true_label": "PSA 10"}).status_code == 422
 
 
 def test_no_model_returns_503(client):
@@ -68,4 +68,4 @@ def test_no_model_returns_503(client):
 def test_metrics_exposed(client):
     client.post("/predict", files={"file": ("c.jpg", jpeg_bytes(card_image()), "image/jpeg")})
     text = client.get("/metrics").text
-    assert "psa_request_latency_seconds" in text and "psa_predicted_band_total" in text
+    assert "psa_request_latency_seconds" in text and "psa_predicted_verdict_total" in text

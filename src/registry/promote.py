@@ -18,7 +18,7 @@ from mlflow.exceptions import MlflowException
 
 from src.alerts import send_alert
 from src.config import load_params
-from src.registry.gates import check_gates
+from src.registry.gates import CHAMPION_METRIC, check_gates
 
 
 def _alias_version(client: MlflowClient, name: str, alias: str):
@@ -34,10 +34,10 @@ def gate_and_register(candidate: dict, params: dict | None = None) -> dict:
     client = MlflowClient()
 
     champion = _alias_version(client, reg["model_name"], reg["champion_alias"])
-    champion_map50 = None
+    champion_f1 = None  # champion รุ่นเก่าที่ยังไม่มี metric นี้ -> ไม่เทียบ
     if champion:
-        champion_map50 = client.get_run(champion.run_id).data.metrics.get("test_map50")
-    decision = check_gates(candidate, champion_map50, params["gates"])
+        champion_f1 = client.get_run(champion.run_id).data.metrics.get(CHAMPION_METRIC)
+    decision = check_gates(candidate, champion_f1, params["gates"])
     decision.update({"candidate_run_id": candidate["run_id"], "candidate_name": candidate["name"],
                      "champion_version": champion.version if champion else None})
 
@@ -100,11 +100,12 @@ def list_versions(params: dict | None = None) -> None:
     aliases: dict[str, list[str]] = {}
     for alias, version in client.get_registered_model(name).aliases.items():
         aliases.setdefault(str(version), []).append(alias)
-    print(f"{'ver':>4} {'status':<12} {'aliases':<20} {'test_map50':>10}  run")
+    print(f"{'ver':>4} {'status':<12} {'aliases':<20} {'test_F1':>8} {'test_map50':>10}  run")
     for mv in sorted(client.search_model_versions(f"name='{name}'"), key=lambda v: int(v.version)):
-        m = client.get_run(mv.run_id).data.metrics.get("test_map50", float("nan"))
+        metrics = client.get_run(mv.run_id).data.metrics
+        f1, m = metrics.get(CHAMPION_METRIC, float("nan")), metrics.get("test_map50", float("nan"))
         tags = ",".join(aliases.get(str(mv.version), []))
-        print(f"{str(mv.version):>4} {mv.tags.get('status', '-'):<12} {tags:<20} {m:>10.3f}  {mv.run_id}")
+        print(f"{str(mv.version):>4} {mv.tags.get('status', '-'):<12} {tags:<20} {f1:>8.3f} {m:>10.3f}  {mv.run_id}")
 
 
 if __name__ == "__main__":

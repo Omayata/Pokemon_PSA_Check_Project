@@ -2,9 +2,11 @@
 
 training:  ingest -> validate_raw -> prepare -> validate_processed -> train x N -> select_best
            -> gate_and_register -> deploy (API reload)
+regate:    validate -> ประเมิน weights เดิมใน runs/train ด้วยตัวชี้วัดปัจจุบัน -> select_best -> gate -> deploy
 monitor:   check_drift -> (ถ้าเจอ drift ตามนโยบาย) -> training(drift_augment=...)
 
 python -m pipelines.flow train [--quick]
+python -m pipelines.flow regate
 python -m pipelines.flow monitor [--no-retrain]
 """
 
@@ -20,7 +22,7 @@ from src.config import load_params
 from src.data.ingest import download
 from src.data.prepare import prepare_dataset
 from src.data.validate import validate_dataset
-from src.models.train import train_experiment
+from src.models.train import reevaluate_experiment, train_experiment
 from src.registry.promote import gate_and_register, reload_api
 
 
@@ -47,14 +49,27 @@ def train_task(exp: dict, data_dir: str, params: dict, quick: bool) -> dict:
     return train_experiment(exp, data_dir, params, quick)
 
 
+@task(name="reevaluate")
+def reevaluate_task(exp: dict, data_dir: str, params: dict) -> dict:
+    return reevaluate_experiment(exp, data_dir, params)
+
+
 @task(name="select-best")
 def select_best_task(results: list[dict], params: dict) -> dict:
     metric = params["train"]["selection_metric"]
-    best = max(results, key=lambda r: r["val"][metric])  # เลือกจาก valid set (ไม่แตะ test)
+    tolerance = params["train"]["selection_tolerance"]
+    # เลือกจาก valid set (ไม่แตะ test): ตัวที่คะแนนห่างจากอันดับ 1 ไม่เกิน tolerance ถือว่าเสมอกัน
+    # -> เลือกโมเดลที่เล็กที่สุด (มักไม่ overfit กับ valid set ขนาดเล็ก + เร็วกว่า) ถ้าขนาดเท่ากันเอาคะแนน valid สูงกว่า
+    # (ไม่ใช้ latency เป็นตัวตัดสิน เพราะวัดบน CPU แล้วแกว่งระหว่างรอบ -> ผลการเลือกจะไม่คงที่)
+    top = max(r["val"][metric] for r in results)
+    tied = [r for r in results if r["val"][metric] >= top - tolerance]
+    best = min(tied, key=lambda r: (round(r["model_size_mb"]), -r["val"][metric]))
     comparison = [
-        {"name": r["name"], "run_id": r["run_id"], f"val_{metric}": round(r["val"][metric], 4),
-         "test_map50": round(r["test"]["map50"], 4), "latency_p95_ms": round(r["latency_p95_ms"], 1),
-         "model_size_mb": round(r["model_size_mb"], 1)}
+        {"name": r["name"], "run_id": r["run_id"], "threshold": r["threshold"],
+         f"val_{metric}": round(r["val"][metric], 4),
+         **{f"test_{k}": round(r["test"][k], 4)
+            for k in ("img_f1", "img_recall", "img_precision", "img_specificity", "img_roc_auc", "map50")},
+         "latency_p95_ms": round(r["latency_p95_ms"], 1), "model_size_mb": round(r["model_size_mb"], 1)}
         for r in results
     ]
     Path("reports").mkdir(exist_ok=True)
@@ -91,6 +106,19 @@ def training_pipeline(quick: bool = False, drift_augment: list[str] | None = Non
     return decision
 
 
+@flow(name="psa-regate-pipeline")
+def regate_pipeline() -> dict:
+    """เปลี่ยนตัวชี้วัด/เกณฑ์แล้ว ไม่ต้องเทรนใหม่: ประเมิน weights เดิมทุกตัว -> เลือก -> gate -> deploy"""
+    params = load_params()
+    data_dir = params["data"]["processed_dir"]
+    validate_task(data_dir, params, "processed")
+    results = [reevaluate_task(exp, data_dir, params) for exp in params["train"]["experiments"]]
+    best = select_best_task(results, params)
+    decision = gate_task(best, params)
+    deploy_task(decision)
+    return decision
+
+
 @task(name="check-drift")
 def check_drift_task() -> dict:
     api_url = os.getenv("PSA_API_URL", "http://localhost:8000")
@@ -115,11 +143,14 @@ if __name__ == "__main__":
     sub = parser.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("train")
     t.add_argument("--quick", action="store_true", help="เทรนแค่ quick_epochs เพื่อทดสอบ pipeline")
+    sub.add_parser("regate")
     m = sub.add_parser("monitor")
     m.add_argument("--no-retrain", action="store_true")
     m.add_argument("--quick", action="store_true")
     args = parser.parse_args()
     if args.cmd == "train":
         training_pipeline(quick=args.quick)
+    elif args.cmd == "regate":
+        regate_pipeline()
     else:
         drift_monitor(auto_retrain=not args.no_retrain, quick=args.quick)

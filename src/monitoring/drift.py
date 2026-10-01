@@ -2,8 +2,8 @@
 
 Data drift    = distribution ของ input เปลี่ยน (P(x) เปลี่ยน) เช่น ภาพมืดลง เบลอขึ้น
                 -> เทียบ image stats ของ request ล่าสุดกับ reference (train set) ด้วย PSI + KS test
-Concept drift = ความสัมพันธ์ input->ผลลัพธ์เปลี่ยน (P(y|x) เปลี่ยน) เช่น PSA ให้เกรดเข้มขึ้น
-                -> input หน้าตาเหมือนเดิม แต่ผลที่ทายตรงกับเกรด PSA จริง (/feedback) น้อยลง
+Concept drift = ความสัมพันธ์ input->ผลลัพธ์เปลี่ยน (P(y|x) เปลี่ยน) เช่น มาตรฐาน "การ์ดสภาพดี" เข้มขึ้น
+                -> input หน้าตาเหมือนเดิม แต่ผลที่ทายตรงกับผลตรวจจริงโดยคน (/feedback) น้อยลง
 """
 
 import json
@@ -73,9 +73,9 @@ def detect_data_drift(reference: dict, records: list[dict], cfg: dict) -> dict:
 
 
 def detect_concept_drift(records: list[dict], feedback: list[dict], cfg: dict) -> dict:
-    """เทียบอัตราที่ทายช่วงเกรดตรงกับผล PSA จริง: ช่วงแรกหลัง deploy (baseline) vs ช่วงล่าสุด"""
-    pred_by_id = {r["request_id"]: r["prediction"]["band"] for r in records}
-    pairs = [(pred_by_id[fb["request_id"]], fb["true_band"]) for fb in feedback if fb["request_id"] in pred_by_id]
+    """เทียบอัตราที่ทาย good/defective ตรงกับผลตรวจจริง: ช่วงแรกหลัง deploy (baseline) vs ช่วงล่าสุด"""
+    pred_by_id = {r["request_id"]: r["prediction"]["verdict"] for r in records}
+    pairs = [(pred_by_id[fb["request_id"]], fb["true_label"]) for fb in feedback if fb["request_id"] in pred_by_id]
     if len(pairs) < 2 * cfg["min_samples"]:
         return {"status": "insufficient_feedback", "n": len(pairs), "detected": False}
     w = min(cfg["window_size"], len(pairs) // 2)

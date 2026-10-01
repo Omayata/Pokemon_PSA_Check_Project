@@ -54,16 +54,19 @@ train:
       batch: -1
       lr0: 0.01
       augment: {mosaic: 1.0, fliplr: 0.5, hsv_v: 0.4, scale: 0.25, degrees: 3.0}
-  selection_metric: map50      # เลือกโมเดลจาก valid set (test เก็บไว้ใช้ gate อย่างเดียว)
+  selection_metric: img_f1     # เลือกโมเดลจาก valid set (test เก็บไว้ใช้ gate อย่างเดียว)
+  selection_tolerance: 0.01    # คะแนน valid ห่างจากตัวที่ดีที่สุดไม่เกินนี้ = เสมอกัน -> เลือกโมเดลเล็กกว่า
 
-# Optimizing metric = map50 (ยิ่งสูงยิ่งดี)
-# Gating metrics = เกณฑ์ที่ต้องผ่านทุกข้อจึงจะขึ้น production
+# โจทย์: จำแนกการ์ด "good" (ไม่มีตำหนิ) / "defective" (มีตำหนิอย่างน้อย 1 จุด) ระดับภาพ
+# Optimizing metric = F1 ของคลาส defective ระดับภาพ (เลือกโมเดลจาก valid set)
+# Gating metrics = เกณฑ์ที่ต้องผ่านทุกข้อบน test set จึงจะขึ้น production
 gates:
-  min_map50: 0.50
-  min_recall_scratch: 0.40
+  min_recall_defect: 0.90      # พลาดการ์ดมีตำหนิได้ไม่เกิน 10% (ผู้ใช้เสียค่าเกรดฟรี = ความเสียหายหลัก)
+  min_precision_defect: 0.90   # เตือนผิดว่าการ์ดดีมีตำหนิได้น้อย
+  min_roc_auc: 0.90
   max_p95_latency_ms: 300      # latency ของโมเดล (ไม่รวม network) บน CPU
   max_model_size_mb: 50
-  max_regression_vs_champion: 0.01   # map50 แย่กว่า champion ได้ไม่เกินเท่านี้
+  max_regression_vs_champion: 0.02   # F1 แย่กว่า champion ได้ไม่เกินเท่านี้
 
 serving:
   device: cpu                  # API ใน Docker ไม่มี GPU -> ให้บริการและวัด latency gate บน CPU เสมอ
@@ -80,17 +83,14 @@ registry:
   champion_alias: champion
   previous_alias: previous
 
-grader:
-  # Stage 2: แปลงตำหนิที่ detect ได้ -> คะแนน 1-10 -> ช่วงเกรด PSA
-  min_confidence: 0.25         # นับตำหนิที่โมเดลมั่นใจน้อยด้วย (พลาดตำหนิแย่กว่าเตือนเกิน)
+classifier:
+  # Stage 1 YOLO หาตำหนิ -> Stage 2 ตัดสินระดับภาพ: defect_probability = confidence สูงสุดของตำหนิ
+  # defect_probability >= threshold -> "defective" ไม่งั้น "good"
+  detect_conf: 0.05            # เก็บกรอบที่มั่นใจตั้งแต่ค่านี้ (ต่ำไว้เพื่อคำนวณ ROC ได้ครบ)
+  threshold: 0.15              # ค่าเริ่มต้น; ตอนเทรนจะหาค่าที่ F1 สูงสุดบน valid แล้วเก็บไว้กับโมเดล
   card_class: card
-  defect_weights: {scratch: 2.5, edge wear: 2.0, corner wear: 2.0}   # ตำหนิชัด 1 จุด ~ ตกจาก PSA 9-10
-  area_weight: 20.0            # ตำหนิใหญ่ (สัดส่วนต่อพื้นที่การ์ด) ถูกหักมากขึ้น
-  bands:                       # เรียงจากดีไปแย่: [คะแนนขั้นต่ำ, ชื่อช่วง]
-    - [9.5, "PSA 9-10"]          # ต้องแทบไม่มีตำหนิเลย
-    - [8.0, "PSA 7-8"]
-    - [6.0, "PSA 5-6"]
-    - [0.0, "PSA 1-4"]
+  defect_classes: [corner wear, edge wear, scratch]
+  labels: [good, defective]
 
 monitoring:
   log_dir: logs
@@ -99,8 +99,8 @@ monitoring:
   psi_threshold: 0.2           # PSI > 0.2 = distribution เปลี่ยนมาก
   ks_pvalue: 0.01
   data_features: [brightness, contrast, sharpness, aspect_ratio]
-  prediction_features: [score, n_defects]
-  concept_agreement_drop: 0.15 # อัตราตรงกับผล PSA จริงลดลงเกินนี้ = concept drift
+  prediction_features: [defect_probability, n_defects]
+  concept_agreement_drop: 0.15 # อัตราทายตรงกับผลตรวจจริง (/feedback) ลดลงเกินนี้ = concept drift
 
 retrain:
   on_data_drift: true

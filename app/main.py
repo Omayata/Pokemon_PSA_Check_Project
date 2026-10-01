@@ -1,6 +1,6 @@
-"""Pokemon PSA Grader API
+"""Pokemon Card Condition API: จำแนกการ์ด good / defective จากรูปถ่าย
 
-Serving pattern: Cascade แบบ real-time (Stage 1 YOLO หาตำหนิ -> Stage 2 ประเมินช่วงเกรด)
+Serving pattern: Cascade แบบ real-time (Stage 1 YOLO หาตำหนิ -> Stage 2 ตัดสิน good/defective)
 + /predict/batch สำหรับผู้ขายที่ส่งการ์ดหลายใบพร้อมกัน
 
 Endpoints: /predict /predict/batch /feedback /health /ready /metrics /monitoring/drift /admin/reload
@@ -23,7 +23,6 @@ from pydantic import BaseModel
 from src.config import load_params
 from src.data.validate import DataValidationError, validate_upload
 from src.features.transform import image_stats, load_image
-from src.models.grader import band_names
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("api")
@@ -39,14 +38,18 @@ REQUEST_LATENCY = Histogram(
 )
 REQUESTS = Counter("psa_requests_total", "Requests", ["endpoint", "status"])
 REJECTED = Counter("psa_rejected_inputs_total", "Inputs rejected by schema validation", ["reason"])
-PREDICTED_BAND = Counter("psa_predicted_band_total", "Predicted PSA band", ["band"])
+PREDICTED_VERDICT = Counter("psa_predicted_verdict_total", "Predicted verdict", ["verdict"])
+DEFECT_PROBABILITY = Histogram(
+    "psa_defect_probability", "Predicted defect probability",
+    buckets=(0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
 DEFECTS = Counter("psa_detected_defects_total", "Detected defects", ["type"])
 MODEL_LOADED = Gauge("psa_model_loaded", "1 if a model is loaded")
 MODEL_VERSION = Gauge("psa_model_version", "Registry version of the loaded model")
 DATA_DRIFT = Gauge("psa_data_drift_detected", "1 if data drift detected")
 DRIFT_PSI = Gauge("psa_drift_psi", "PSI per input feature", ["feature"])
 CONCEPT_DRIFT = Gauge("psa_concept_drift_detected", "1 if concept drift detected")
-AGREEMENT = Gauge("psa_feedback_agreement", "Agreement with real PSA grade (latest window)")
+AGREEMENT = Gauge("psa_feedback_agreement", "Agreement with verified label from /feedback (latest window)")
 
 
 # ---------------------------------------------------------------- model state
@@ -81,7 +84,9 @@ def load_model() -> None:
         # (2) ใช้โค้ด src/ ของ image นี้ ไม่ใช่โค้ดเก่าที่ถูกแนบมากับโมเดล
         art = Path(mlflow.artifacts.download_artifacts(artifact_uri=uri)) / "artifacts"
         params = yaml.safe_load((art / "params_snapshot.yaml").read_text(encoding="utf-8"))
-        params.setdefault("serving", PARAMS["serving"])  # โมเดลรุ่นเก่าที่ยังไม่มีค่านี้
+        # โมเดลรุ่นเก่า (ก่อนเปลี่ยนเป็น good/defective) ไม่มีค่าเหล่านี้ -> ใช้ค่าจาก config ปัจจุบัน
+        params.setdefault("serving", PARAMS["serving"])
+        params.setdefault("classifier", PARAMS["classifier"])
         reference = json.loads((art / "reference_stats.json").read_text(encoding="utf-8"))
         predictor = Predictor(next(art.glob("*.pt")), params, reference)
         version, source = str(mv.version), uri
@@ -107,7 +112,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Pokemon PSA Grader API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Pokemon Card Condition API", version="2.0.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -148,7 +153,8 @@ def _predict_bytes(data: bytes, filename: str | None) -> dict:
     result = predictor.predict(img)
     latency_ms = (time.perf_counter() - t0) * 1000
 
-    PREDICTED_BAND.labels(result["band"]).inc()
+    PREDICTED_VERDICT.labels(result["verdict"]).inc()
+    DEFECT_PROBABILITY.observe(result["defect_probability"])
     for defect, n in result["defect_counts"].items():
         if n:
             DEFECTS.labels(defect).inc(n)
@@ -157,7 +163,7 @@ def _predict_bytes(data: bytes, filename: str | None) -> dict:
         "ts": datetime.now(UTC).isoformat(),
         "model_version": version,
         "input": stats,
-        "prediction": {k: result[k] for k in ("score", "band", "n_defects", "defect_area_ratio")},
+        "prediction": {k: result[k] for k in ("verdict", "defect_probability", "n_defects")},
         "latency_ms": round(latency_ms, 2),
     })
     return {"request_id": request_id, "model_version": version, "latency_ms": round(latency_ms, 2), **result}
@@ -205,13 +211,13 @@ def predict_batch(files: list[UploadFile] = File(...)):
 
 class Feedback(BaseModel):
     request_id: str
-    true_band: str  # ผลเกรดจริงจาก PSA เช่น "PSA 9-10"
+    true_label: str  # ผลตรวจจริงโดยคน: "good" หรือ "defective"
 
 
 @app.post("/feedback")
 def feedback(fb: Feedback):
-    if fb.true_band not in band_names(PARAMS["grader"]):
-        raise HTTPException(422, f"true_band must be one of {band_names(PARAMS['grader'])}")
+    if fb.true_label not in PARAMS["classifier"]["labels"]:
+        raise HTTPException(422, f"true_label must be one of {PARAMS['classifier']['labels']}")
     _append_jsonl("feedback.jsonl", {**fb.model_dump(), "ts": datetime.now(UTC).isoformat()})
     return {"ok": True}
 
