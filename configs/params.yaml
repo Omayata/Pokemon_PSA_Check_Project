@@ -72,8 +72,11 @@ serving:
   device: cpu                  # API ใน Docker ไม่มี GPU -> ให้บริการและวัด latency gate บน CPU เสมอ
 
 slo:
-  p50_latency_ms: 200
-  p95_latency_ms: 500          # end-to-end ที่ API
+  # วัดที่ API (end-to-end) ต่อ 1 instance ที่โหลดไม่เกิน concurrency นี้; โหลดมากกว่านี้ -> เพิ่มจำนวน instance
+  # (1 instance ประมวลผลทีละภาพ ~85 ms -> รับได้ ~11.5 req/s, latency เพิ่มตามความยาวคิว)
+  concurrency: 4
+  p50_latency_ms: 400
+  p95_latency_ms: 500          # ผู้ใช้อัปโหลดรูปแล้วรอผล: ไม่เกินครึ่งวินาทีถือว่าตอบทันที
   min_throughput_rps: 5
   max_error_rate: 0.01
   availability: 0.99

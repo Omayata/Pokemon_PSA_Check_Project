@@ -83,9 +83,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pyyaml==6.0.2
       - name: Check candidate model against gating metrics
-        # reports/candidate_metrics.json มาจาก pipeline แล้ว commit มากับ PR
-        # เมื่อมีไฟล์นี้แล้วให้เพิ่ม --strict เพื่อบังคับ
-        run: python scripts/check_model_gate.py
+        # reports/candidate_metrics.json มาจาก pipeline แล้ว commit มากับ PR (ไม่มีไฟล์ = fail)
+        run: python scripts/check_model_gate.py --strict
 
   # ---------------------------------------------------------------- 5) build image + smoke test
   docker:

@@ -27,7 +27,7 @@ def main() -> int:
         return 1 if args.strict else 0
 
     candidate = json.loads(path.read_text(encoding="utf-8"))
-    decision = check_gates(candidate, champion_map50=None, gates=load_params()["gates"])
+    decision = check_gates(candidate, champion_f1=None, gates=load_params()["gates"])
     print(f"Model: {candidate['name']} (run {candidate['run_id']})")
     for name, r in decision["checks"].items():
         mark = "✅" if r["passed"] else "❌"

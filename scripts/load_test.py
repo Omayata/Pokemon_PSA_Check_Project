@@ -1,6 +1,6 @@
 """Load test: วัด latency p50/p95/p99 และ throughput ของ API จริง แล้วเทียบกับ SLO ใน params.yaml
 
-python scripts/load_test.py --images data/processed/test/images --n 200 --concurrency 8
+python scripts/load_test.py --images data/processed/test/images --n 200   # concurrency = slo.concurrency
 ผลลัพธ์: reports/load_test.json (exit 1 ถ้าผิด SLO)
 """
 
@@ -24,8 +24,10 @@ def main() -> int:
     parser.add_argument("--url", default="http://localhost:8000")
     parser.add_argument("--images", default="data/processed/test/images")
     parser.add_argument("--n", type=int, default=200)
-    parser.add_argument("--concurrency", type=int, default=8)
+    parser.add_argument("--concurrency", type=int, default=None, help="default: slo.concurrency ใน params.yaml")
     args = parser.parse_args()
+    slo = load_params()["slo"]
+    args.concurrency = args.concurrency or slo["concurrency"]
 
     files = sorted(p for p in Path(args.images).glob("*") if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
     if not files:
@@ -52,7 +54,6 @@ def main() -> int:
 
     lat = np.array([r[0] for r in results])
     errors = sum(1 for _, s in results if s != 200)
-    slo = load_params()["slo"]
     report = {
         "n_requests": args.n,
         "concurrency": args.concurrency,

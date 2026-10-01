@@ -1,5 +1,5 @@
 {
-  "run_id": "875fad960e4f4ad3a017e26684df2a8a",
+  "run_id": "8cc871c1905a4e9295d77364d09ad4e7",
   "name": "yolov8n_aug",
   "threshold": 0.1,
   "val": {
@@ -50,7 +50,7 @@
     "ap50_scratch": 0.034106352356214245,
     "recall_scratch": 0.07692307692307693
   },
-  "latency_p50_ms": 125.66649995278567,
-  "latency_p95_ms": 162.10459999274462,
+  "latency_p50_ms": 72.13009998667985,
+  "latency_p95_ms": 88.44734996091574,
   "model_size_mb": 5.970309257507324
 }

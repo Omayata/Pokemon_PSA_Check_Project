@@ -1,0 +1,24 @@
+{
+  "n_requests": 200,
+  "concurrency": 4,
+  "p50_ms": 340.7,
+  "p95_ms": 437.5,
+  "p99_ms": 511.9,
+  "throughput_rps": 11.31,
+  "error_rate": 0.0,
+  "slo": {
+    "concurrency": 4,
+    "p50_latency_ms": 400,
+    "p95_latency_ms": 500,
+    "min_throughput_rps": 5,
+    "max_error_rate": 0.01,
+    "availability": 0.99
+  },
+  "slo_check": {
+    "p50": true,
+    "p95": true,
+    "throughput": true,
+    "error_rate": true
+  },
+  "slo_met": true
+}
