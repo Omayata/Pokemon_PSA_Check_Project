@@ -27,7 +27,7 @@ class Predictor:
             img,
             imgsz=self.params["train"]["imgsz"],
             conf=self.params["grader"]["min_confidence"],
-            device=self.params["train"]["device"],
+            device=self.params["serving"]["device"],
             verbose=False,
         )[0]
         return [

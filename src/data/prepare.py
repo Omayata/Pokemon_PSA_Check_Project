@@ -63,7 +63,8 @@ def prepare_dataset(raw_dir: str | Path, params: dict | None = None, drift_augme
     }
     (out_dir / "data.yaml").write_text(yaml.safe_dump(data_yaml, allow_unicode=True), encoding="utf-8")
 
-    raw_version = json.loads((raw_dir / "data_version.json").read_text()) if (raw_dir / "data_version.json").exists() else {}
+    raw_version_file = raw_dir / "data_version.json"
+    raw_version = json.loads(raw_version_file.read_text()) if raw_version_file.exists() else {}
     data_hash, n_files = compute_data_hash(out_dir)
     version = {
         "raw_version": raw_version.get("sha256_16", "unknown"),
@@ -79,7 +80,8 @@ def prepare_dataset(raw_dir: str | Path, params: dict | None = None, drift_augme
 if __name__ == "__main__":
     params = load_params()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--raw", default=str(Path(params["data"]["raw_dir"]) / f"v{params['data']['roboflow_version']}"))
+    default_raw = Path(params["data"]["raw_dir"]) / f"v{params['data']['roboflow_version']}"
+    parser.add_argument("--raw", default=str(default_raw))
     parser.add_argument("--drift-augment", nargs="*", default=[])
     args = parser.parse_args()
     prepare_dataset(args.raw, params, args.drift_augment)

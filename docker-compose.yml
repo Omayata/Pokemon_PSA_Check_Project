@@ -5,7 +5,7 @@
 x-app-env: &app-env
   MLFLOW_TRACKING_URI: http://mlflow:5000
   PREFECT_API_URL: http://prefect:4200/api
-  API_URL: http://api:8000
+  PSA_API_URL: http://api:8000
   LOG_DIR: /app/logs
   ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
 

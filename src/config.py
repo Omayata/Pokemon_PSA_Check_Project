@@ -17,6 +17,15 @@ def load_params(path: str | None = None) -> dict:
         return yaml.safe_load(f)
 
 
+def resolve_device(value: str | int) -> str:
+    """"auto" -> "0" ถ้ามี CUDA GPU ไม่มีก็ "cpu" """
+    if str(value) != "auto":
+        return str(value)
+    import torch
+
+    return "0" if torch.cuda.is_available() else "cpu"
+
+
 def normalize_name(name: str) -> str:
     """'Corner-Wear' / 'corner_wear' / 'Corner Wear' -> 'corner wear'"""
     return " ".join(name.replace("-", " ").replace("_", " ").lower().split())

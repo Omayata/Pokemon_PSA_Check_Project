@@ -84,7 +84,7 @@ def rollback(to_version: str | None = None, params: dict | None = None) -> str:
 
 
 def reload_api() -> None:
-    url = os.getenv("API_URL", "http://localhost:8000")
+    url = os.getenv("PSA_API_URL", "http://localhost:8000")
     try:
         r = httpx.post(f"{url}/admin/reload", timeout=120)
         print(f"🔄 API reload: {r.status_code} {r.text}")
@@ -108,6 +108,9 @@ def list_versions(params: dict | None = None) -> None:
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    load_dotenv()
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")

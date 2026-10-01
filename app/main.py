@@ -69,13 +69,22 @@ def load_model() -> None:
     predictor, version, source = None, None, None
     try:
         import mlflow
+        import yaml
         from mlflow import MlflowClient
 
-        uri = f"models:/{reg['model_name']}@{reg['champion_alias']}"
-        pyfunc = mlflow.pyfunc.load_model(uri)
-        predictor = pyfunc.unwrap_python_model().predictor
-        version = str(MlflowClient().get_model_version_by_alias(reg["model_name"], reg["champion_alias"]).version)
-        source = uri
+        from src.models.predictor import Predictor
+
+        mv = MlflowClient().get_model_version_by_alias(reg["model_name"], reg["champion_alias"])
+        uri = f"models:/{reg['model_name']}/{mv.version}"
+        # ดาวน์โหลดไฟล์ของโมเดลแล้วอ่านเอง แทน mlflow.pyfunc.load_model เพราะ
+        # (1) โมเดลที่ log จาก Windows เก็บ path แบบ "\" ซึ่ง Linux หาไม่เจอ
+        # (2) ใช้โค้ด src/ ของ image นี้ ไม่ใช่โค้ดเก่าที่ถูกแนบมากับโมเดล
+        art = Path(mlflow.artifacts.download_artifacts(artifact_uri=uri)) / "artifacts"
+        params = yaml.safe_load((art / "params_snapshot.yaml").read_text(encoding="utf-8"))
+        params.setdefault("serving", PARAMS["serving"])  # โมเดลรุ่นเก่าที่ยังไม่มีค่านี้
+        reference = json.loads((art / "reference_stats.json").read_text(encoding="utf-8"))
+        predictor = Predictor(next(art.glob("*.pt")), params, reference)
+        version, source = str(mv.version), uri
     except Exception as e:
         logger.warning("โหลดจาก MLflow ไม่ได้: %s", e)
         model_path = os.getenv("MODEL_PATH")

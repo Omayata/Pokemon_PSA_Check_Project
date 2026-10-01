@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 
 import httpx
-from dotenv import load_dotenv
 from prefect import flow, get_run_logger, task
 
 from src.config import load_params
@@ -94,7 +93,7 @@ def training_pipeline(quick: bool = False, drift_augment: list[str] | None = Non
 
 @task(name="check-drift")
 def check_drift_task() -> dict:
-    api_url = os.getenv("API_URL", "http://localhost:8000")
+    api_url = os.getenv("PSA_API_URL", "http://localhost:8000")
     r = httpx.get(f"{api_url}/monitoring/drift", timeout=60)
     r.raise_for_status()
     return r.json()
@@ -112,7 +111,6 @@ def drift_monitor(auto_retrain: bool = True, quick: bool = False) -> dict:
 
 
 if __name__ == "__main__":
-    load_dotenv()
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("train")

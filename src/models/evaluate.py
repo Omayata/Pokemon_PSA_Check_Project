@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.config import normalize_name
+from src.config import normalize_name, resolve_device
 from src.data.validate import IMAGE_EXTS
 from src.features.transform import image_stats, load_image
 
@@ -24,7 +24,8 @@ def evaluate_detector(weights: str | Path, data_yaml: str | Path, split: str, pa
         data=str(data_yaml),
         split=split,
         imgsz=params["train"]["imgsz"],
-        device=params["train"]["device"],
+        device=resolve_device(params["train"]["device"]),
+        workers=params["train"]["workers"],  # ค่า default = 8 -> เปิด process ค้างหลายสิบตัวบน Windows
         project="runs/val",
         name=split,
         exist_ok=True,
