@@ -1,6 +1,7 @@
-"""Predictor = Stage 1 (YOLO detector) + Stage 2 (grader) ใช้ตัวเดียวกันทั้งตอนประเมินผลและตอน serving
+"""Predictor = Stage 1 (YOLO detector) + Stage 2 (classifier good/defective)
+ใช้ตัวเดียวกันทั้งตอนประเมินผลและตอน serving
 
-PSAGraderPyfunc ห่อ Predictor เป็น MLflow pyfunc model: weights + config + reference stats
+CardConditionPyfunc ห่อ Predictor เป็น MLflow pyfunc model: weights + config (รวม threshold) + reference stats
 ถูกเก็บรวมกันใน model version เดียว -> serving ได้ config ชุดเดียวกับตอนเทรนเสมอ
 """
 
@@ -11,7 +12,7 @@ import mlflow.pyfunc
 import yaml
 from PIL import Image
 
-from src.models.grader import Detection, grade
+from src.models.classifier import Detection, classify
 
 
 class Predictor:
@@ -26,7 +27,7 @@ class Predictor:
         result = self.detector.predict(
             img,
             imgsz=self.params["train"]["imgsz"],
-            conf=self.params["grader"]["min_confidence"],
+            conf=self.params["classifier"]["detect_conf"],
             device=self.params["serving"]["device"],
             verbose=False,
         )[0]
@@ -36,14 +37,17 @@ class Predictor:
         ]
 
     def predict(self, img: Image.Image) -> dict:
-        return grade(self.detect(img), img.size, self.params["grader"])
+        return classify(self.detect(img), self.params["classifier"])
 
 
-class PSAGraderPyfunc(mlflow.pyfunc.PythonModel):
+class CardConditionPyfunc(mlflow.pyfunc.PythonModel):
     def load_context(self, context):
-        params = yaml.safe_load(Path(context.artifacts["params"]).read_text(encoding="utf-8"))
-        reference = json.loads(Path(context.artifacts["reference_stats"]).read_text(encoding="utf-8"))
-        self.predictor = Predictor(context.artifacts["weights"], params, reference)
+        def artifact(key: str) -> Path:  # โมเดลที่ log จาก Windows เก็บ path ด้วย "\"
+            return Path(context.artifacts[key].replace("\\", "/"))
+
+        params = yaml.safe_load(artifact("params").read_text(encoding="utf-8"))
+        reference = json.loads(artifact("reference_stats").read_text(encoding="utf-8"))
+        self.predictor = Predictor(artifact("weights"), params, reference)
 
     def predict(self, context, model_input, params=None):
         """model_input: list ของ path ภาพ (หรือ DataFrame คอลัมน์ 'path')"""

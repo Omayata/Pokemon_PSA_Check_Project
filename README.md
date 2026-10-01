@@ -1,7 +1,7 @@
-# Pokemon Card Pre-Grader (PSA) — MLOps Project
+# Pokemon Card Condition Check — MLOps Project
 
 ระบบประเมินสภาพการ์ดโปเกม่อนจากรูปถ่าย: หาตำหนิ (scratch / edge wear / corner wear) ด้วย YOLOv8
-แล้วประเมินช่วงเกรด PSA โดยประมาณ ครบวงจร MLOps ตั้งแต่ข้อมูลดิบจนถึงการให้บริการและเฝ้าระวัง
+แล้วจำแนกการ์ดเป็น **good** (สภาพดี) หรือ **defective** (มีตำหนิ) ครบวงจร MLOps ตั้งแต่ข้อมูลดิบจนถึงการให้บริการและเฝ้าระวัง
 
 - สถาปัตยกรรม: [docs/architecture.md](docs/architecture.md)
 - AI Project Canvas, metrics, SLO, นโยบาย retrain: [docs/ai_project_canvas.md](docs/ai_project_canvas.md)
@@ -19,7 +19,7 @@
 │   ├── features/transform.py    load_image() + image_stats() ใช้ร่วม train/serve
 │   ├── models/train.py          เทรน + บันทึก MLflow ครบ 6 อย่าง
 │   ├── models/evaluate.py       mAP ราย class, latency, reference stats
-│   ├── models/grader.py         Stage 2: ตำหนิ -> คะแนน -> ช่วง PSA
+│   ├── models/classifier.py     Stage 2: ตำหนิ -> good / defective
 │   ├── models/predictor.py      Stage 1 + 2 และ MLflow pyfunc wrapper
 │   ├── registry/                gate, promote, rollback
 │   ├── monitoring/drift.py      data drift (PSI+KS) / concept drift (feedback)
@@ -60,6 +60,7 @@ python -m venv .venv
 docker compose up -d --build                         # เปิด MLflow, Prefect, API ฯลฯ
 .venv\Scripts\python -m pipelines.flow train --quick # ทดสอบก่อน
 .venv\Scripts\python -m pipelines.flow train         # เทรนเต็ม -> ผ่าน gate แล้ว API reload เอง
+.venv\Scripts\python -m pipelines.flow regate        # เปลี่ยนเกณฑ์/ตัวชี้วัด: ประเมิน weights เดิมใหม่ ไม่ต้องเทรน
 ```
 
 | URL | ใช้ทำอะไร |
@@ -67,7 +68,7 @@ docker compose up -d --build                         # เปิด MLflow, Pref
 | http://localhost:8000/docs | ทดลองเรียก API |
 | http://localhost:5000 | MLflow: เทียบ experiment / registry |
 | http://localhost:4200 | Prefect: ดู DAG และประวัติการรัน |
-| http://localhost:3000 | Grafana dashboard "Pokemon PSA Grader" |
+| http://localhost:3000 | Grafana dashboard "Pokemon Card Condition" |
 | http://localhost:9090/alerts | Prometheus alert rules |
 
 ## API
@@ -76,7 +77,7 @@ docker compose up -d --build                         # เปิด MLflow, Pref
 curl -F "file=@card.jpg" http://localhost:8000/predict
 curl -F "files=@a.jpg" -F "files=@b.jpg" http://localhost:8000/predict/batch
 curl -X POST http://localhost:8000/feedback -H "Content-Type: application/json" \
-     -d '{"request_id": "<id จาก /predict>", "true_band": "PSA 7-8"}'
+     -d '{"request_id": "<id จาก /predict>", "true_label": "defective"}'
 curl http://localhost:8000/health           # liveness + model version
 curl http://localhost:8000/ready            # 503 ถ้ายังไม่มีโมเดล
 curl http://localhost:8000/metrics          # Prometheus
@@ -98,7 +99,7 @@ pip install -r requirements-dev.txt -c constraints.txt
 | ภาพเสีย -> API ตอบ 422 พร้อมเหตุผล | `python scripts/make_bad_data.py api` |
 | Latency p50/p95 + throughput เทียบ SLO | `python scripts/load_test.py --n 200 --concurrency 8` |
 | Data drift (ภาพมืด) | `python scripts/simulate_drift.py data --kind dark --n 100` |
-| Concept drift (PSA เข้มขึ้น) | `python scripts/simulate_drift.py concept --n 120` |
+| Concept drift (มาตรฐานสภาพดีเข้มขึ้น) | `python scripts/simulate_drift.py concept --n 120` |
 | ตรวจ drift -> retrain อัตโนมัติ | `docker compose run --rm trainer python -m pipelines.flow monitor` |
 | ดู registry | `docker compose run --rm trainer python -m src.registry.promote list` |
 | Rollback | `docker compose run --rm trainer python -m src.registry.promote rollback` |
