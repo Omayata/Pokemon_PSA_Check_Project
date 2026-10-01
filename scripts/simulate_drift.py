@@ -60,12 +60,12 @@ def main() -> None:
         if result is None or args.mode != "concept":
             continue
         # concept drift: ครึ่งแรกคนตรวจเห็นด้วยกับโมเดล ~90%
-        # ครึ่งหลังมาตรฐานเข้มขึ้น: การ์ดที่โมเดลว่า good คนตรวจบอกว่า defective ~80%
+        # ครึ่งหลังมาตรฐานเข้มขึ้น: การ์ดที่โมเดลว่า good คนตรวจบอกว่า defective ~90%
         pred = result["verdict"]
         if i < args.n // 2:
             true = pred if random.random() < 0.9 else labels[1 - labels.index(pred)]
         else:
-            true = "defective" if pred == "good" and random.random() < 0.8 else pred
+            true = "defective" if pred == "good" and random.random() < 0.9 else pred
         client.post(f"{args.url}/feedback", json={"request_id": result["request_id"], "true_label": true})
 
     report = client.get(f"{args.url}/monitoring/drift").json()

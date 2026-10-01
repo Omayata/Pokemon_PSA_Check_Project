@@ -12,6 +12,7 @@ import os
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,6 +64,11 @@ class ModelState:
 
 
 state = ModelState()
+# ประมวลผลทุก request บน thread เดียวกันเสมอ: PyTorch สร้าง OpenMP thread team แยกต่อ thread ที่เรียกใช้
+# ถ้าหลาย thread ผลัดกันเรียก team ที่ว่างจะ spin แย่ง CPU กัน -> วัดจริง 4+ request พร้อมกัน
+# throughput ตกจาก ~12 เหลือ ~6 req/s; thread เดียว = team เดียวที่ "อุ่น" อยู่ตลอด
+# (scale เพิ่มด้วยการเพิ่มจำนวน instance/container)
+INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="inference")
 STARTED = time.time()
 
 
@@ -137,6 +143,10 @@ def _predict_bytes(data: bytes, filename: str | None) -> dict:
         raise HTTPException(503, "model not loaded")
     request_id = uuid.uuid4().hex
     t0 = time.perf_counter()
+    return INFERENCE_EXECUTOR.submit(_predict_on_worker, data, filename, request_id, t0).result()
+
+
+def _predict_on_worker(data: bytes, filename: str | None, request_id: str, t0: float) -> dict:
     try:
         validate_upload(data, PARAMS["schema"])
     except DataValidationError as e:

@@ -24,7 +24,6 @@ from src.models.evaluate import (
     build_reference_stats,
     evaluate_detector,
     image_labels,
-    list_images,
     measure_latency,
     predict_images,
     tune_threshold,
@@ -107,7 +106,7 @@ def _evaluate_and_log(exp: dict, save_dir: Path, data_dir: Path, params: dict, r
     for f in save_dir.glob("*"):
         if f.suffix in {".png", ".jpg", ".csv", ".yaml"} and f.name != "params_snapshot.yaml":
             mlflow.log_artifact(str(f), "training")
-    reference = build_reference_stats(list_images(data_dir / "train"), val_results, max_side)
+    reference = build_reference_stats(val_paths, val_results, max_side)
     ref_path = save_dir / "reference_stats.json"
     ref_path.write_text(json.dumps(reference), encoding="utf-8")
     params_path = save_dir / "params_snapshot.yaml"

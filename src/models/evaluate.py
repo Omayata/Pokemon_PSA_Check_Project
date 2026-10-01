@@ -118,10 +118,14 @@ def tune_threshold(y: np.ndarray, s: np.ndarray) -> float:
     return float(best)
 
 
-def build_reference_stats(train_images: list[Path], valid_results: list[dict], max_side: int) -> dict:
-    """distribution อ้างอิงของ input (จาก train) และ output (ผลทำนายบน valid) สำหรับเทียบกับ production"""
+def build_reference_stats(valid_images: list[Path], valid_results: list[dict], max_side: int) -> dict:
+    """distribution อ้างอิงของ input และ output จาก valid set สำหรับเทียบกับ production
+
+    ใช้ valid ไม่ใช่ train: train ของ Roboflow v5 ถูก augment (blur, noise, rotation) ไว้ 3 เท่า
+    ทำให้ความคม/ความสว่างต่างจากภาพจริง -> ภาพปกติจะถูกตีว่า drift (false alarm)
+    """
     data: dict[str, list[float]] = {}
-    for p in train_images[:MAX_REFERENCE_SAMPLES]:
+    for p in valid_images[:MAX_REFERENCE_SAMPLES]:
         for k, v in image_stats(load_image(p, max_side=max_side)).items():
             data.setdefault(k, []).append(v)
     prediction = {
