@@ -18,7 +18,7 @@ from mlflow.exceptions import MlflowException
 
 from src.alerts import send_alert
 from src.config import load_params
-from src.registry.gates import CHAMPION_METRIC, check_gates
+from src.registry.gates import CHAMPION_METRIC, TEST_VERSION_TAG, check_gates
 
 
 def _alias_version(client: MlflowClient, name: str, alias: str):
@@ -34,12 +34,18 @@ def gate_and_register(candidate: dict, params: dict | None = None) -> dict:
     client = MlflowClient()
 
     champion = _alias_version(client, reg["model_name"], reg["champion_alias"])
-    champion_f1 = None  # champion รุ่นเก่าที่ยังไม่มี metric นี้ -> ไม่เทียบ
+    # เทียบกับ champion เฉพาะเมื่อวัดบน test set ชุดเดียวกัน: test set เปลี่ยน (เช่น เพิ่ม dataset) -> F1 คนละสเกล
+    # champion รุ่นเก่าที่ไม่มี metric/tag นี้ -> ไม่เทียบ (เกณฑ์ขั้นต่ำข้ออื่นยังบังคับใช้ตามปกติ)
+    champion_f1 = None
     if champion:
-        champion_f1 = client.get_run(champion.run_id).data.metrics.get(CHAMPION_METRIC)
+        champion_run = client.get_run(champion.run_id)
+        candidate_test = client.get_run(candidate["run_id"]).data.tags.get(TEST_VERSION_TAG)
+        if candidate_test and champion_run.data.tags.get(TEST_VERSION_TAG) == candidate_test:
+            champion_f1 = champion_run.data.metrics.get(CHAMPION_METRIC)
     decision = check_gates(candidate, champion_f1, params["gates"])
     decision.update({"candidate_run_id": candidate["run_id"], "candidate_name": candidate["name"],
-                     "champion_version": champion.version if champion else None})
+                     "champion_version": champion.version if champion else None,
+                     "compared_with_champion": champion_f1 is not None})
 
     # ลงทะเบียนทุกตัว (ทั้งผ่านและไม่ผ่าน) เพื่อให้เห็นประวัติใน registry
     mv = register_model(f"runs:/{candidate['run_id']}/model", reg["model_name"])

@@ -63,7 +63,7 @@ jobs:
             exit 0
           fi
           python -m src.data.ingest
-          python -m src.data.validate --dataset data/raw/v5 --report reports/data_validation_raw.json
+          python -m src.data.validate --raw --report reports/data_validation_raw.json
           python -m src.data.prepare
           python -m src.data.validate --report reports/data_validation.json
       - uses: actions/upload-artifact@v4

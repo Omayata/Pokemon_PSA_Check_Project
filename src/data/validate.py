@@ -2,7 +2,8 @@
 
 ถ้าพบข้อมูลเสีย -> ส่ง alert และ raise DataValidationError เพื่อหยุด pipeline / ปฏิเสธ request
 
-รันเอง: python -m src.data.validate --dataset data/processed
+รันเอง: python -m src.data.validate                 # data/processed (class ชุดกลาง)
+       python -m src.data.validate --raw           # raw ของทุก source (class ตาม class_map)
 """
 
 import argparse
@@ -167,6 +168,15 @@ def validate_dataset(dataset_dir: str | Path, schema: dict, alert: bool = True) 
     return _finish(report, errors, warnings, alert)
 
 
+def raw_schema(schema: dict, source: dict) -> dict:
+    """schema สำหรับ raw ของ source หนึ่ง: class ต้องตรงกับ key ของ class_map, ไม่บังคับจำนวนต่อ class
+    (class ที่จะถูกตัดทิ้งอาจมีน้อย) -> จำนวนต่อ class ตรวจที่ data/processed แทน"""
+    return {**schema, "expected_classes": list(source["class_map"]), "min_instances_per_class": 0,
+            # source ที่จะถูกแบ่งใหม่: ยังตรวจภาพ/label ทุก split แต่ไม่บังคับจำนวนต่อ split ของต้นทาง
+            "min_images_per_split": {k: 0 for k in schema["min_images_per_split"]} if source.get("resplit")
+            else schema["min_images_per_split"]}
+
+
 def _finish(report: dict, errors: list[str], warnings: list[str], alert: bool) -> dict:
     report["n_errors"] = len(errors)
     report["errors"] = errors[:MAX_ERRORS_SHOWN]
@@ -184,15 +194,23 @@ def _finish(report: dict, errors: list[str], warnings: list[str], alert: bool) -
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate a YOLO dataset against the schema in params.yaml")
     parser.add_argument("--dataset", default=None, help="default: data.processed_dir จาก params.yaml")
+    parser.add_argument("--raw", action="store_true", help="ตรวจ raw ของทุก source แทน")
     parser.add_argument("--report", default="reports/data_validation.json")
     args = parser.parse_args()
 
+    from src.data.ingest import raw_path
+
     params = load_params()
-    dataset = args.dataset or params["data"]["processed_dir"]
+    if args.raw:
+        targets = [(raw_path(params, s), raw_schema(params["schema"], s)) for s in params["data"]["sources"]]
+    else:
+        targets = [(args.dataset or params["data"]["processed_dir"], params["schema"])]
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+    report: dict = {}
     try:
-        report = validate_dataset(dataset, params["schema"])
-        print(f"✅ Data validation passed: {report['splits']}")
+        for dataset, schema in targets:
+            report[str(dataset)] = validate_dataset(dataset, schema)
+            print(f"✅ Data validation passed: {dataset} {report[str(dataset)]['splits']}")
     except DataValidationError as e:
         report = {"passed": False, "n_errors": len(e.errors), "errors": e.errors[:MAX_ERRORS_SHOWN]}
         print(f"❌ {e}")

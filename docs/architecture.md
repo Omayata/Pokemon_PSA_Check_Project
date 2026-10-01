@@ -3,7 +3,7 @@
 ```mermaid
 flowchart LR
     subgraph Data["Data"]
-        RF[(Roboflow<br/>card-grader v5)] -->|ingest + hash| RAW[data/raw]
+        RF[(Roboflow x2<br/>card-grader v5<br/>card-defect v6)] -->|ingest + hash| RAW[data/raw/source]
         RAW -->|validate schema| V1{OK?}
         V1 -->|no| STOP1[[stop + alert]]
         V1 -->|yes| PREP[prepare<br/>src/features/transform.py]

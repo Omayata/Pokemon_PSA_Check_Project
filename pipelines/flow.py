@@ -21,27 +21,28 @@ from prefect import flow, get_run_logger, task
 from src.config import load_params
 from src.data.ingest import download
 from src.data.prepare import prepare_dataset
-from src.data.validate import validate_dataset
+from src.data.validate import raw_schema, validate_dataset
 from src.models.train import reevaluate_experiment, train_experiment
+from src.registry.gates import select_best
 from src.registry.promote import gate_and_register, reload_api
 
 
 @task(name="ingest")
-def ingest_task(params: dict) -> str:
-    return str(download(params))
+def ingest_task(params: dict) -> dict[str, str]:
+    return {name: str(path) for name, path in download(params).items()}
 
 
 @task(name="validate-data")
-def validate_task(dataset_dir: str, params: dict, stage: str) -> dict:
-    report = validate_dataset(dataset_dir, params["schema"])  # ไม่ผ่าน -> raise -> flow หยุด + alert
+def validate_task(dataset_dir: str, params: dict, stage: str, schema: dict | None = None) -> dict:
+    report = validate_dataset(dataset_dir, schema or params["schema"])  # ไม่ผ่าน -> raise -> flow หยุด + alert
     Path("reports").mkdir(exist_ok=True)
     Path(f"reports/data_validation_{stage}.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
 
 
 @task(name="prepare")
-def prepare_task(raw_dir: str, params: dict, drift_augment: list[str]) -> str:
-    return str(prepare_dataset(raw_dir, params, drift_augment))
+def prepare_task(raw_dirs: dict[str, str], params: dict, drift_augment: list[str]) -> str:
+    return str(prepare_dataset({k: Path(v) for k, v in raw_dirs.items()}, params, drift_augment))
 
 
 @task(name="train")
@@ -57,16 +58,11 @@ def reevaluate_task(exp: dict, data_dir: str, params: dict) -> dict:
 @task(name="select-best")
 def select_best_task(results: list[dict], params: dict) -> dict:
     metric = params["train"]["selection_metric"]
-    tolerance = params["train"]["selection_tolerance"]
-    # เลือกจาก valid set (ไม่แตะ test): ตัวที่คะแนนห่างจากอันดับ 1 ไม่เกิน tolerance ถือว่าเสมอกัน
-    # -> เลือกโมเดลที่เล็กที่สุด (มักไม่ overfit กับ valid set ขนาดเล็ก + เร็วกว่า) ถ้าขนาดเท่ากันเอาคะแนน valid สูงกว่า
-    # (ไม่ใช้ latency เป็นตัวตัดสิน เพราะวัดบน CPU แล้วแกว่งระหว่างรอบ -> ผลการเลือกจะไม่คงที่)
-    top = max(r["val"][metric] for r in results)
-    tied = [r for r in results if r["val"][metric] >= top - tolerance]
-    best = min(tied, key=lambda r: (round(r["model_size_mb"]), -r["val"][metric]))
+    tiebreak = params["train"]["selection_tiebreak"]
+    best = select_best(results, params["train"])
     comparison = [
         {"name": r["name"], "run_id": r["run_id"], "threshold": r["threshold"],
-         f"val_{metric}": round(r["val"][metric], 4),
+         f"val_{metric}": round(r["val"][metric], 4), f"val_{tiebreak}": round(r["val"][tiebreak], 4),
          **{f"test_{k}": round(r["test"][k], 4)
             for k in ("img_f1", "img_recall", "img_precision", "img_specificity", "img_roc_auc", "map50")},
          "latency_p95_ms": round(r["latency_p95_ms"], 1), "model_size_mb": round(r["model_size_mb"], 1)}
@@ -95,9 +91,10 @@ def deploy_task(decision: dict) -> None:
 @flow(name="psa-training-pipeline")
 def training_pipeline(quick: bool = False, drift_augment: list[str] | None = None) -> dict:
     params = load_params()
-    raw_dir = ingest_task(params)
-    validate_task(raw_dir, params, "raw")
-    data_dir = prepare_task(raw_dir, params, drift_augment or [])
+    raw_dirs = ingest_task(params)
+    for source in params["data"]["sources"]:
+        validate_task(raw_dirs[source["name"]], params, f"raw_{source['name']}", raw_schema(params["schema"], source))
+    data_dir = prepare_task(raw_dirs, params, drift_augment or [])
     validate_task(data_dir, params, "processed")
     results = [train_task(exp, data_dir, params, quick) for exp in params["train"]["experiments"]]
     best = select_best_task(results, params)

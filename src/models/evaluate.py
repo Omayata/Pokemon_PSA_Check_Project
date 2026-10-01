@@ -24,7 +24,7 @@ def evaluate_detector(weights: str | Path, data_yaml: str | Path, split: str, pa
     from ultralytics import YOLO
 
     m = YOLO(str(weights)).val(
-        data=str(data_yaml),
+        data=str(Path(data_yaml).resolve()),  # relative -> ultralytics จะไปหาใต้ datasets_dir ของมันเอง
         split=split,
         imgsz=params["train"]["imgsz"],
         device=resolve_device(params["train"]["device"]),
@@ -109,6 +109,18 @@ def binary_metrics(y: np.ndarray, s: np.ndarray, threshold: float) -> dict:
         "img_roc_auc": roc_auc(y, s),
         "img_tp": tp, "img_fp": fp, "img_fn": fn, "img_tn": tn,
     }
+
+
+def per_source_metrics(paths: list[Path], y: np.ndarray, s: np.ndarray, threshold: float) -> dict:
+    """ผลแยกตาม source (ชื่อไฟล์ขึ้นต้นด้วย <source>__) -> เช็คว่าโมเดลไม่ได้ดีแค่กับ dataset เดียว
+    หรือเรียนทางลัด เช่น "ภาพจาก dataset ที่มีการ์ดดีเยอะ = good" """
+    sources = np.array([p.name.split("__")[0] for p in paths])
+    keep = ("img_recall", "img_precision", "img_specificity", "img_f1", "img_roc_auc", "img_accuracy")
+    out = {}
+    for src in sorted(set(sources)):
+        mask = sources == src
+        out.update({f"{src}_{k}": v for k, v in binary_metrics(y[mask], s[mask], threshold).items() if k in keep})
+    return out
 
 
 def tune_threshold(y: np.ndarray, s: np.ndarray) -> float:

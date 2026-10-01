@@ -11,11 +11,11 @@
 
 ```
 ├── .github/workflows/ci.yml     CI: lint, tests, data validation, model gate, docker build
-├── configs/params.yaml          ค่าตั้งเดียวของทั้งระบบ
+├── configs/params.yaml          ค่าตั้งเดียวของทั้งระบบ (รวมรายการ dataset + class map)
 ├── src/
-│   ├── data/ingest.py           ดาวน์โหลด Roboflow (pin version) + data version hash
+│   ├── data/ingest.py           ดาวน์โหลดทุก dataset จาก Roboflow (pin version) + data version hash
 │   ├── data/validate.py         schema ของ dataset และของภาพขาเข้า
-│   ├── data/prepare.py          raw -> processed ด้วย transform เดียวกับ serving
+│   ├── data/prepare.py          รวม dataset + map class + แบ่ง split ใหม่ -> processed (transform เดียวกับ serving)
 │   ├── features/transform.py    load_image() + image_stats() ใช้ร่วม train/serve
 │   ├── models/train.py          เทรน + บันทึก MLflow ครบ 6 อย่าง
 │   ├── models/evaluate.py       mAP ราย class, latency, reference stats
@@ -42,7 +42,7 @@ cd Pokemon_PSA_Check_Project
 cp .env.example .env              # แล้วใส่ ROBOFLOW_API_KEY
 
 docker compose up -d --build      # API :8000, MLflow :5000, Prefect :4200, Prometheus :9090, Grafana :3000
-docker compose run --rm trainer   # ⭐ คำสั่งเดียว: ingest -> validate -> prepare -> train x3 -> gate -> register -> deploy
+docker compose run --rm trainer   # ⭐ คำสั่งเดียว: ingest -> validate -> prepare -> train x2 -> gate -> register -> deploy
 ```
 
 ทดสอบ pipeline เร็ว ๆ (เทรน 3 epochs): `docker compose run --rm trainer python -m pipelines.flow train --quick`

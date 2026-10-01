@@ -19,16 +19,19 @@ import numpy as np
 import yaml
 
 from src.config import DEFAULT_PARAMS, ROOT, load_params, resolve_device
+from src.data.ingest import compute_data_hash
 from src.models.evaluate import (
     binary_metrics,
     build_reference_stats,
     evaluate_detector,
     image_labels,
     measure_latency,
+    per_source_metrics,
     predict_images,
     tune_threshold,
 )
 from src.models.predictor import CardConditionPyfunc, Predictor
+from src.registry.gates import TEST_VERSION_TAG
 
 
 def git_commit() -> str:
@@ -52,6 +55,7 @@ def _log_context(exp: dict, params: dict, data_dir: Path, epochs: int, extra_tag
     mlflow.set_tags({
         "git_commit": git_commit(),
         "data_version": data_version["processed_version"],
+        TEST_VERSION_TAG: compute_data_hash(data_dir / "test")[0],  # gate เทียบ F1 กับ champion เฉพาะเมื่อ test set เดียวกัน
         "raw_data_version": data_version["raw_version"],
         "drift_augment": ",".join(data_version.get("drift_augment", [])) or "none",
         "python": platform.python_version(),
@@ -91,6 +95,7 @@ def _evaluate_and_log(exp: dict, save_dir: Path, data_dir: Path, params: dict, r
     s_test = np.array([r["defect_probability"] for r in predict_images(predictor, test_paths, max_side)])
     val_metrics = binary_metrics(y_val, s_val, threshold)
     test_metrics = binary_metrics(y_test, s_test, threshold)
+    test_metrics.update(per_source_metrics(test_paths, y_test, s_test, threshold))
 
     # ข้อมูลประกอบ: คุณภาพการหาตำแหน่งตำหนิของ detector
     data_yaml = data_dir / "data.yaml"
@@ -153,8 +158,8 @@ def train_experiment(exp: dict, data_dir: str | Path, params: dict | None = None
             shutil.rmtree(run_dir)
         model = YOLO(exp["model"])
         model.train(
-            data=str(data_dir / "data.yaml"), epochs=epochs, batch=exp["batch"], lr0=exp["lr0"], imgsz=tp["imgsz"],
-            patience=tp["patience"], device=resolve_device(tp["device"]), workers=tp["workers"],
+            data=str((data_dir / "data.yaml").resolve()), epochs=epochs, batch=exp["batch"], lr0=exp["lr0"],
+            imgsz=tp["imgsz"], patience=tp["patience"], device=resolve_device(tp["device"]), workers=tp["workers"],
             seed=params["seed"], deterministic=True,
             project="runs/train", name=exp["name"], exist_ok=True, verbose=False,
             **exp.get("augment", {}),

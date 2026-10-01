@@ -4,6 +4,7 @@
 """
 
 CHAMPION_METRIC = "test_img_f1"  # ชื่อ metric ใน MLflow ที่ใช้เทียบกับ champion
+TEST_VERSION_TAG = "test_data_version"  # tag ใน MLflow: hash ของ test set ที่ใช้วัด CHAMPION_METRIC
 
 
 def check_gates(candidate: dict, champion_f1: float | None, gates: dict) -> dict:
@@ -25,3 +26,14 @@ def check_gates(candidate: dict, champion_f1: float | None, gates: dict) -> dict
         for k, (v, op, t) in checks.items()
     }
     return {"passed": all(r["passed"] for r in results.values()), "checks": results}
+
+
+def select_best(results: list[dict], train_cfg: dict) -> dict:
+    """เลือกจาก valid set (ไม่แตะ test): ตัวที่คะแนนห่างจากอันดับ 1 ไม่เกิน tolerance ถือว่าเสมอกัน
+    -> เลือกโมเดลที่เล็กที่สุด (มักไม่ overfit กับ valid set ขนาดเล็ก + เร็วกว่า)
+    -> ขนาดเท่ากันเอา val tiebreak (AUC) สูงกว่า: F1 ต่างกันไม่ถึง tolerance = noise แต่ AUC วัดการแยก good/defective ทุก threshold
+    (ไม่ใช้ latency เป็นตัวตัดสิน เพราะวัดบน CPU แล้วแกว่งระหว่างรอบ -> ผลการเลือกจะไม่คงที่)"""
+    metric, tiebreak = train_cfg["selection_metric"], train_cfg["selection_tiebreak"]
+    top = max(r["val"][metric] for r in results)
+    tied = [r for r in results if r["val"][metric] >= top - train_cfg["selection_tolerance"]]
+    return min(tied, key=lambda r: (round(r["model_size_mb"]), -r["val"][tiebreak], -r["val"][metric]))
