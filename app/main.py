@@ -156,10 +156,11 @@ def _predict_on_worker(data: bytes, filename: str | None, request_id: str, t0: f
                                    "errors": e.errors}))
         raise HTTPException(422, {"message": str(e), "errors": e.errors, "request_id": request_id}) from e
 
-    img = load_image(data, max_side=PARAMS["transform"]["max_side"])
-    stats = image_stats(img)
     with state.lock:
         predictor, version = state.predictor, state.version
+    # ใช้ค่า transform ที่บันทึกไว้กับโมเดลตัวนี้ (ไม่ใช่ config ของ image) -> ตรงกับตอนเทรนเสมอ
+    img = load_image(data, max_side=predictor.params["transform"]["max_side"])
+    stats = image_stats(img)
     result = predictor.predict(img)
     latency_ms = (time.perf_counter() - t0) * 1000
 

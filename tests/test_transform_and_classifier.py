@@ -39,7 +39,18 @@ def test_clean_card_is_good(params):
     result = classify([CARD], params["classifier"])
     assert result["verdict"] == "good"
     assert result["defect_probability"] == 0.0
-    assert result["card_found"] and result["n_defects"] == 0
+    assert result["n_defects"] == 0
+
+
+def test_card_found_only_when_model_has_card_class(params):
+    cfg = params["classifier"]
+    assert classify([CARD], {**cfg, "card_class": None})["card_found"] is None
+    assert classify([CARD], {**cfg, "card_class": "card"})["card_found"] is True
+
+
+def test_crease_counts_as_defect(params):
+    result = classify([Detection("crease", 0.6, (10, 10, 200, 30))], params["classifier"])
+    assert result["verdict"] == "defective" and result["defect_counts"]["crease"] == 1
 
 
 def test_defect_above_threshold_is_defective(params):
@@ -48,7 +59,8 @@ def test_defect_above_threshold_is_defective(params):
                        Detection("corner_wear", 0.9, (0, 0, 40, 40))], cfg)
     assert result["verdict"] == "defective"
     assert result["defect_probability"] == 0.9  # = confidence สูงสุดของตำหนิ
-    assert result["defect_counts"] == {"corner wear": 1, "edge wear": 1, "scratch": 0}
+    assert result["defect_counts"]["corner wear"] == 1 and result["defect_counts"]["edge wear"] == 1
+    assert result["defect_counts"]["scratch"] == 0
 
 
 def test_defect_below_threshold_is_good_but_scored(params):

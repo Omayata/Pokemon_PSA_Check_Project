@@ -16,6 +16,7 @@ def params():
     p = copy.deepcopy(load_params())
     p["schema"]["min_images_per_split"] = {"train": 3, "valid": 1, "test": 1}
     p["schema"]["min_instances_per_class"] = 1
+    p["schema"]["expected_classes"] = CLASSES  # dataset ทดสอบใน fixture ใช้ 4 class นี้
     return p
 
 

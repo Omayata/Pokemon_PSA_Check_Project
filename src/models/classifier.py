@@ -19,7 +19,7 @@ class Detection:
 
 def classify(detections: list[Detection], cfg: dict) -> dict:
     defect_classes = {normalize_name(c) for c in cfg["defect_classes"]}
-    card_class = normalize_name(cfg["card_class"])
+    card_class = normalize_name(cfg["card_class"]) if cfg.get("card_class") else None
     threshold = cfg["threshold"]
 
     defects = [d for d in detections if normalize_name(d.cls) in defect_classes]
@@ -33,7 +33,8 @@ def classify(detections: list[Detection], cfg: dict) -> dict:
         "verdict": "defective" if defect_probability >= threshold else "good",
         "defect_probability": round(defect_probability, 4),
         "threshold": threshold,
-        "card_found": any(normalize_name(d.cls) == card_class for d in detections),
+        # None = โมเดลไม่มี class การ์ด (ตรวจไม่ได้ว่ามีการ์ดในภาพไหม)
+        "card_found": any(normalize_name(d.cls) == card_class for d in detections) if card_class else None,
         "n_defects": len(shown),
         "defect_counts": counts,
         "defects": [asdict(d) for d in shown],

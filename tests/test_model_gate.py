@@ -1,4 +1,4 @@
-from src.registry.gates import check_gates
+from src.registry.gates import check_gates, select_best
 
 
 def candidate(recall=0.95, precision=0.97, auc=0.95, f1=0.96, p95=100.0, size=6.0):
@@ -24,6 +24,25 @@ def test_regression_vs_champion_blocks(params):
     decision = check_gates(candidate(f1=0.80), champion_f1=0.95, gates=params["gates"])
     assert not decision["passed"]
     assert not decision["checks"]["no_regression_vs_champion"]["passed"]
+
+
+def experiment(name, val_f1, val_auc, size=6.0):
+    return {"name": name, "val": {"img_f1": val_f1, "img_roc_auc": val_auc}, "model_size_mb": size}
+
+
+def test_select_best_tie_broken_by_val_auc(params):
+    # F1 ต่างกันไม่ถึง tolerance = เสมอ -> ตัดสินด้วย val AUC (ไม่ใช่ F1 ที่สูงกว่านิดเดียว)
+    results = [experiment("noaug", 0.9533, 0.9526), experiment("aug", 0.9524, 0.9535)]
+    assert select_best(results, params["train"])["name"] == "aug"
+
+
+def test_select_best_prefers_smaller_then_clear_winner(params):
+    tol = params["train"]["selection_tolerance"]
+    assert select_best([experiment("n", 0.95, 0.90), experiment("s", 0.955, 0.99, size=22.0)],
+                       params["train"])["name"] == "n"
+    # ชนะเกิน tolerance -> ไม่นับว่าเสมอ แม้ AUC ต่ำกว่า
+    assert select_best([experiment("a", 0.95, 0.99), experiment("b", 0.95 + 2 * tol, 0.90)],
+                       params["train"])["name"] == "b"
 
 
 def test_ci_gate_script_exit_codes(tmp_path, monkeypatch):

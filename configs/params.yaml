@@ -4,18 +4,48 @@
 seed: 42
 
 data:
-  roboflow_workspace: group-6-major-project
-  roboflow_project: card-grader
-  roboflow_version: 5          # pin เวอร์ชันข้อมูล -> ดาวน์โหลดซ้ำได้ข้อมูลเดิมทุกครั้ง
-  export_format: yolov8        # dataset นี้เป็น object detection ต้องใช้ yolov8 ไม่ใช่ folder
   raw_dir: data/raw
   processed_dir: data/processed
   splits: [train, valid, test]
+  export_format: yolov8        # object detection -> yolov8 (ไม่ใช่ folder)
+  # รวมหลาย dataset (pin version ทุกตัว -> ดาวน์โหลดซ้ำได้ข้อมูลเดิม) แล้ว map ชื่อ class ให้เป็นชุดเดียวกัน
+  # class_map: ชื่อใน dataset ต้นทาง -> ชื่อกลาง (null = ตัดทิ้ง)
+  sources:
+    - name: cardgrader
+      roboflow_workspace: group-6-major-project
+      roboflow_project: card-grader
+      roboflow_version: 5
+      resplit: false           # ใช้ train/valid/test ของ Roboflow ตามเดิม
+      class_map:
+        Card: null             # มีเฉพาะ dataset นี้ -> ถ้าเก็บไว้โมเดลจะเรียนว่า "มีกรอบ Card = มาจาก dataset นี้"
+        Corner Wear: corner wear
+        Edge Wear: edge wear
+        Scratch: scratch
+    - name: hkdefect
+      roboflow_workspace: hansraj-kumar
+      roboflow_project: pokemon-card-defect-detection
+      roboflow_version: 6      # ภาพ fit within 1280 px, มี crease/dent
+      # valid/test ของต้นทางแทบไม่มีการ์ดดีและรอยพับ -> รวมแล้วแบ่งใหม่ตามภาพต้นฉบับ
+      resplit: {valid: 0.1, test: 0.1}
+      class_map:
+        corner-wear: corner wear
+        edge-wear: edge wear
+        scratch: scratch
+        crease: crease
+        dent: dent
+        ink-loss: ink loss
+        Delamination: delamination
+        delamination_corner: delamination
+        perfect corner: null   # dataset เดิมไม่ได้ label "ส่วนที่สมบูรณ์" -> ตัดทิ้งให้ label สอดคล้องกัน
+        perfect edge: null
+        thread: null           # มีแค่ 36 กรอบ
+        web.whatsapp.com: null # label ขยะ
+  classes: [corner wear, edge wear, scratch, crease, dent, ink loss, delamination]
 
 schema:
-  # ชื่อ class ที่คาดหวัง (เทียบแบบ normalize: ตัวเล็ก ไม่สนช่องว่าง/ขีด)
-  # ถ้าชื่อใน data.yaml ของ Roboflow ต่างจากนี้ ให้แก้ตรงนี้ให้ตรง
-  expected_classes: [card, corner wear, edge wear, scratch]
+  # ชื่อ class ที่คาดหวังของ data/processed (เทียบแบบ normalize: ตัวเล็ก ไม่สนช่องว่าง/ขีด)
+  # raw ของแต่ละ source ตรวจกับ key ของ class_map แทน
+  expected_classes: [corner wear, edge wear, scratch, crease, dent, ink loss, delamination]
   min_images_per_split: {train: 100, valid: 20, test: 20}
   min_instances_per_class: 10  # ใน train set
   min_image_side: 200
@@ -25,37 +55,34 @@ schema:
   min_pixel_std: 5.0           # ต่ำกว่านี้ = ภาพสีเดียว/ภาพเปล่า
 
 transform:
-  max_side: 416                # = ขนาดที่ Roboflow v5 resize ไว้ (fit within 416) ใช้ทั้ง train และ serve
+  max_side: 832                # = imgsz ของโมเดล ใช้ทั้ง train และ serve (cardgrader 416 px ไม่ถูกขยาย, hkdefect 1280 px ถูกย่อ)
   jpeg_quality: 95
 
 train:
   imgsz: 832                   # ขยาย 2 เท่าจากภาพ 416: ตำหนิเล็ก (6-13px) -> 12-26px ให้ YOLO (stride 8) มองเห็น
   device: auto                 # auto = ใช้ GPU ถ้ามี ไม่มีก็ใช้ CPU (หรือระบุ 0 / cpu)
   workers: 4
-  patience: 30                 # หยุดเองถ้า val ไม่ดีขึ้น 30 epochs ติด
+  patience: 15                 # หยุดเองถ้า val ไม่ดีขึ้น 15 epochs ติด
   mlflow_experiment: pokemon-psa-grader
   quick_epochs: 3              # ใช้กับ --quick เพื่อทดสอบ pipeline เร็ว ๆ
+  # dataset v2 (รวม 2 source ~3,200 ภาพเทรน): yolov8n ~3 นาที/epoch บน RTX 3050 Ti -> 2 ตัว x 40 epochs ~4 ชม.
+  # yolov8s ตัดออก: รอบก่อน overfit (test precision 0.84) และช้ากว่า ~2.3 เท่า
   experiments:                 # batch: -1 = ให้ ultralytics เลือกขนาดที่พอดี VRAM (กัน out of memory)
     - name: baseline_yolov8n_noaug
       model: yolov8n.pt
-      epochs: 100              # RTX 3050 Ti: ~75 s/epoch -> สูงสุด ~2 ชม.
+      epochs: 40
       batch: -1
       lr0: 0.01
       augment: {mosaic: 0.0, fliplr: 0.0, hsv_h: 0.0, hsv_s: 0.0, hsv_v: 0.0, scale: 0.0, translate: 0.0}
     - name: yolov8n_aug
       model: yolov8n.pt
-      epochs: 100
+      epochs: 40
       batch: -1
       lr0: 0.01
       augment: {mosaic: 1.0, fliplr: 0.5, hsv_v: 0.4, scale: 0.25, degrees: 3.0}   # scale ต่ำ: ไม่ย่อตำหนิจนหาย
-    - name: yolov8s_aug
-      model: yolov8s.pt
-      epochs: 80               # ~170 s/epoch -> สูงสุด ~4 ชม.
-      batch: -1
-      lr0: 0.01
-      augment: {mosaic: 1.0, fliplr: 0.5, hsv_v: 0.4, scale: 0.25, degrees: 3.0}
   selection_metric: img_f1     # เลือกโมเดลจาก valid set (test เก็บไว้ใช้ gate อย่างเดียว)
   selection_tolerance: 0.01    # คะแนน valid ห่างจากตัวที่ดีที่สุดไม่เกินนี้ = เสมอกัน -> เลือกโมเดลเล็กกว่า
+  selection_tiebreak: img_roc_auc  # เสมอกันและขนาดเท่ากัน -> เลือกตัวที่ val AUC สูงกว่า (F1 ดูแค่ threshold เดียว, AUC ดูทุก threshold)
 
 # โจทย์: จำแนกการ์ด "good" (ไม่มีตำหนิ) / "defective" (มีตำหนิอย่างน้อย 1 จุด) ระดับภาพ
 # Optimizing metric = F1 ของคลาส defective ระดับภาพ (เลือกโมเดลจาก valid set)
@@ -66,7 +93,7 @@ gates:
   min_roc_auc: 0.90
   max_p95_latency_ms: 300      # latency ของโมเดล (ไม่รวม network) บน CPU
   max_model_size_mb: 50
-  max_regression_vs_champion: 0.02   # F1 แย่กว่า champion ได้ไม่เกินเท่านี้
+  max_regression_vs_champion: 0.02   # F1 แย่กว่า champion ได้ไม่เกินเท่านี้ (เทียบเฉพาะเมื่อวัดบน test set ชุดเดียวกัน)
 
 serving:
   device: cpu                  # API ใน Docker ไม่มี GPU -> ให้บริการและวัด latency gate บน CPU เสมอ
@@ -91,8 +118,8 @@ classifier:
   # defect_probability >= threshold -> "defective" ไม่งั้น "good"
   detect_conf: 0.05            # เก็บกรอบที่มั่นใจตั้งแต่ค่านี้ (ต่ำไว้เพื่อคำนวณ ROC ได้ครบ)
   threshold: 0.15              # ค่าเริ่มต้น; ตอนเทรนจะหาค่าที่ F1 สูงสุดบน valid แล้วเก็บไว้กับโมเดล
-  card_class: card
-  defect_classes: [corner wear, edge wear, scratch]
+  card_class: null             # dataset v2 ไม่มี class Card แล้ว
+  defect_classes: [corner wear, edge wear, scratch, crease, dent, ink loss, delamination]
   labels: [good, defective]
 
 monitoring:
