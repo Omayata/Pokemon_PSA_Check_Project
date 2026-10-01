@@ -47,6 +47,21 @@ docker compose run --rm trainer   # ⭐ คำสั่งเดียว: inges
 
 ทดสอบ pipeline เร็ว ๆ (เทรน 3 epochs): `docker compose run --rm trainer python -m pipelines.flow train --quick`
 
+### เทรนด้วย GPU (เร็วกว่ามาก)
+
+Docker บน Windows มองไม่เห็น GPU (ถ้าไม่ตั้งค่าเพิ่ม) จึงเทรนบนเครื่องโดยตรง แต่ยังใช้ MLflow/Prefect ใน Docker
+(`device: auto` ใน params.yaml จะใช้ GPU เองถ้ามี ส่วน API ให้บริการบน CPU เสมอ)
+
+```bash
+python -m venv .venv
+.venv\Scripts\python -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
+.venv\Scripts\python -m pip install -r requirements-dev.txt -c constraints.txt
+
+docker compose up -d --build                         # เปิด MLflow, Prefect, API ฯลฯ
+.venv\Scripts\python -m pipelines.flow train --quick # ทดสอบก่อน
+.venv\Scripts\python -m pipelines.flow train         # เทรนเต็ม -> ผ่าน gate แล้ว API reload เอง
+```
+
 | URL | ใช้ทำอะไร |
 |---|---|
 | http://localhost:8000/docs | ทดลองเรียก API |

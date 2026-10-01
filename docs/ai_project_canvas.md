@@ -9,7 +9,7 @@
 | **Value proposition** | อัปโหลดรูปการ์ด -> เห็นตำแหน่งตำหนิ (scratch / edge wear / corner wear) และช่วงเกรดโดยประมาณในไม่กี่วินาที ช่วยตัดสินใจก่อนจ่ายค่าเกรด |
 | **Why ML, not rules** | ตำหนิมีรูปร่าง ขนาด ตำแหน่งไม่แน่นอน การ์ด holo/full-art มีแสงสะท้อนที่ดูคล้ายรอยขีด กฎแบบ threshold สี/ขอบแยกไม่ได้ ต้องใช้ object detection ที่เรียนจากตัวอย่าง |
 | **ML task** | Cascade: (1) Object detection 4 classes (Card, Corner Wear, Edge Wear, Scratch) ด้วย YOLOv8 -> (2) grader แปลงตำหนิเป็นคะแนน 1-10 และช่วง PSA |
-| **Data** | Roboflow `group-6-major-project/card-grader` v5 (CC BY 4.0) ~632 ภาพ มี bbox label; ไม่มี label เกรด PSA |
+| **Data** | Roboflow `group-6-major-project/card-grader` v5 (CC BY 4.0) 1,510 ภาพ (train 1,311 ซึ่ง Roboflow augment ไว้ 3 เท่าจากภาพต้นฉบับ ~437, valid 122, test 71) resize fit-within 416px, มี bbox label; ไม่มี label เกรด PSA |
 | **Data risks** | น้อยกว่า 5,000 ภาพ -> overfit ได้ง่าย / รับมือ: transfer learning จาก COCO, augmentation, เทียบ baseline ไม่มี aug, ใช้ test set แยกเฉพาะ gate, ตรวจ leakage ข้าม split |
 | **Optimizing metric** | mAP@50 บน test set (ยิ่งสูงยิ่งดี) |
 | **Gating metrics** | mAP50 >= 0.50, recall(scratch) >= 0.40, p95 latency โมเดล <= 300 ms (CPU), ขนาด <= 50 MB, แย่กว่า champion ไม่เกิน 0.01 |

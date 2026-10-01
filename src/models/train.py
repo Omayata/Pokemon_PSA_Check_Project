@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 import mlflow
 import yaml
 
-from src.config import DEFAULT_PARAMS, ROOT, load_params
+from src.config import DEFAULT_PARAMS, ROOT, load_params, resolve_device
 from src.models.evaluate import build_reference_stats, evaluate_detector, list_images, measure_latency
 from src.models.predictor import Predictor, PSAGraderPyfunc
 
@@ -58,6 +59,8 @@ def train_experiment(exp: dict, data_dir: str | Path, params: dict | None = None
             "torch": torch.__version__,
             "ultralytics": ultralytics.__version__,
             "quick": str(quick),
+            "train_device": resolve_device(tp["device"]),
+            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none",
         })
         freeze = subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True).stdout
         mlflow.log_text(freeze, "environment/pip_freeze.txt")
@@ -71,15 +74,19 @@ def train_experiment(exp: dict, data_dir: str | Path, params: dict | None = None
         }
         mlflow.log_params({**hp, **{f"aug_{k}": v for k, v in exp.get("augment", {}).items()}})
 
+        run_dir = Path("runs/train") / exp["name"]
+        if run_dir.exists():  # ultralytics ต่อท้าย results.csv เดิม -> ลบของรอบก่อนทิ้ง
+            shutil.rmtree(run_dir)
         model = YOLO(exp["model"])
         model.train(
             data=str(data_yaml), epochs=epochs, batch=exp["batch"], lr0=exp["lr0"], imgsz=tp["imgsz"],
-            patience=tp["patience"], device=tp["device"], workers=tp["workers"],
+            patience=tp["patience"], device=resolve_device(tp["device"]), workers=tp["workers"],
             seed=params["seed"], deterministic=True,
             project="runs/train", name=exp["name"], exist_ok=True, verbose=False,
             **exp.get("augment", {}),
         )
         save_dir = Path(model.trainer.save_dir)
+        mlflow.log_param("batch_actual", model.trainer.batch_size)  # batch -1 = auto
         best = save_dir / "weights" / "best.pt"
 
         # 4) metrics: valid ใช้เลือกโมเดล / test ใช้ gate
@@ -126,6 +133,9 @@ def train_experiment(exp: dict, data_dir: str | Path, params: dict | None = None
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    load_dotenv()
     params = load_params()
     names = [e["name"] for e in params["train"]["experiments"]]
     parser = argparse.ArgumentParser()
