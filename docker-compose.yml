@@ -1,0 +1,79 @@
+# docker compose up -d --build                     -> API + MLflow + Prefect + Prometheus + Grafana
+# docker compose run --rm trainer                  -> รัน pipeline ทั้งหมด (ingest -> ... -> deploy)
+# docker compose run --rm trainer python -m pipelines.flow monitor   -> ตรวจ drift + retrain อัตโนมัติ
+
+x-app-env: &app-env
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+  PREFECT_API_URL: http://prefect:4200/api
+  PSA_API_URL: http://api:8000
+  LOG_DIR: /app/logs
+  ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+
+services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.18.0
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts --serve-artifacts
+    ports: ["5000:5000"]
+    volumes: ["./mlflow_data:/mlflow"]
+    restart: unless-stopped
+
+  prefect:
+    image: prefecthq/prefect:3.1.4-python3.11
+    command: prefect server start --host 0.0.0.0
+    ports: ["4200:4200"]
+    volumes: ["prefect_data:/root/.prefect"]
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: pokemon-psa-grader:latest
+    environment: *app-env
+    ports: ["8000:8000"]
+    volumes: ["./logs:/app/logs"]
+    depends_on: [mlflow]
+    restart: unless-stopped
+
+  trainer:
+    image: pokemon-psa-grader:latest
+    profiles: ["train"]         # ไม่รันตอน up ปกติ ใช้ผ่าน docker compose run
+    command: python -m pipelines.flow train
+    environment:
+      <<: *app-env
+      ROBOFLOW_API_KEY: ${ROBOFLOW_API_KEY:?set ROBOFLOW_API_KEY in .env}
+    volumes:
+      - ./data:/app/data
+      - ./runs:/app/runs
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    shm_size: 2gb               # dataloader ของ PyTorch ใช้ shared memory
+    depends_on: [mlflow, prefect, api]
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports: ["9090:9090"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+    depends_on: [api]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    ports: ["3000:3000"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+    restart: unless-stopped
+
+volumes:
+  prefect_data:

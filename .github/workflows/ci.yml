@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ---------------------------------------------------------------- 1) คุณภาพโค้ด
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install ruff==0.8.0
+      - name: Lint (ruff)
+        run: ruff check .
+
+  # ---------------------------------------------------------------- 2) unit tests + ทดสอบข้อมูลเสีย
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: constraints.txt
+      - name: Install
+        run: |
+          pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-dev.txt -c constraints.txt
+      - name: Pytest (schema, bad data, transform, grader, gate, API)
+        run: pytest -v
+
+  # ---------------------------------------------------------------- 3) ความถูกต้องของข้อมูลจริง
+  data-validation:
+    runs-on: ubuntu-latest
+    env:
+      ROBOFLOW_API_KEY: ${{ secrets.ROBOFLOW_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: constraints.txt
+      - name: Install
+        run: |
+          pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt -c constraints.txt
+      - name: Download + validate raw + prepare + validate processed
+        run: |
+          if [ -z "$ROBOFLOW_API_KEY" ]; then
+            echo "::warning::ROBOFLOW_API_KEY secret not set - skipping real-data validation"
+            exit 0
+          fi
+          python -m src.data.ingest
+          python -m src.data.validate --dataset data/raw/v5 --report reports/data_validation_raw.json
+          python -m src.data.prepare
+          python -m src.data.validate --report reports/data_validation.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: data-validation-report
+          path: reports/data_validation*.json
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------- 4) เกณฑ์คุณภาพโมเดล
+  model-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install pyyaml==6.0.2
+      - name: Check candidate model against gating metrics
+        # reports/candidate_metrics.json มาจาก pipeline แล้ว commit มากับ PR
+        # เมื่อมีไฟล์นี้แล้วให้เพิ่ม --strict เพื่อบังคับ
+        run: python scripts/check_model_gate.py
+
+  # ---------------------------------------------------------------- 5) build image + smoke test
+  docker:
+    runs-on: ubuntu-latest
+    needs: [code-quality, tests]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build --build-arg GIT_COMMIT=${{ github.sha }} -t pokemon-psa-grader:ci .
+      - name: Run container and check /health
+        run: |
+          docker run -d --name api -p 8000:8000 pokemon-psa-grader:ci
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health; then echo; exit 0; fi
+            sleep 2
+          done
+          docker logs api
+          exit 1
