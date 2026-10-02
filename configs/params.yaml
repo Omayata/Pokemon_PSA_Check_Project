@@ -55,17 +55,19 @@ schema:
   min_pixel_std: 5.0           # ต่ำกว่านี้ = ภาพสีเดียว/ภาพเปล่า
 
 transform:
-  max_side: 832                # = imgsz ของโมเดล ใช้ทั้ง train และ serve (cardgrader 416 px ไม่ถูกขยาย, hkdefect 1280 px ถูกย่อ)
+  max_side: 640                # = imgsz ของโมเดล ใช้ทั้ง train และ serve (cardgrader 416 px ไม่ถูกขยาย, hkdefect 1280 px ถูกย่อ)
   jpeg_quality: 95
 
 train:
-  imgsz: 832                   # ขยาย 2 เท่าจากภาพ 416: ตำหนิเล็ก (6-13px) -> 12-26px ให้ YOLO (stride 8) มองเห็น
+  imgsz: 640                   # ลดจาก 832: งานคำนวณ ~imgsz^2 -> เร็วขึ้น ~1.7 เท่า + ใช้ VRAM น้อยลง (RTX 3050 Ti 4GB)
+                               # ภาพ 416 ยังถูกขยาย 1.5 เท่า: ตำหนิเล็ก (6-13px) -> 9-20px ยังใหญ่กว่า stride 8 ของ YOLO
   device: auto                 # auto = ใช้ GPU ถ้ามี ไม่มีก็ใช้ CPU (หรือระบุ 0 / cpu)
   workers: 4
   patience: 15                 # หยุดเองถ้า val ไม่ดีขึ้น 15 epochs ติด
   mlflow_experiment: pokemon-psa-grader
   quick_epochs: 3              # ใช้กับ --quick เพื่อทดสอบ pipeline เร็ว ๆ
-  # dataset v2 (รวม 2 source ~3,200 ภาพเทรน): yolov8n ~3 นาที/epoch บน RTX 3050 Ti -> 2 ตัว x 40 epochs ~4 ชม.
+  # dataset v2 (รวม 2 source ~3,200 ภาพเทรน): yolov8n @832 ~1.8 นาที/epoch บน RTX 3050 Ti (40 epochs ~1.2 ชม./ตัว)
+  #   @640 คาดว่า ~1 นาที/epoch -> 2 ตัว x 40 epochs ~1.5 ชม. รวมประเมินผล
   # yolov8s ตัดออก: รอบก่อน overfit (test precision 0.84) และช้ากว่า ~2.3 เท่า
   experiments:                 # batch: -1 = ให้ ultralytics เลือกขนาดที่พอดี VRAM (กัน out of memory)
     - name: baseline_yolov8n_noaug
@@ -97,6 +99,10 @@ gates:
 
 serving:
   device: cpu                  # API ใน Docker ไม่มี GPU -> ให้บริการและวัด latency gate บน CPU เสมอ
+  # ทับ threshold ที่เก็บมากับโมเดล (null = ใช้ค่าที่ tune บน valid ตอนเทรน)
+  # 0.15: v10 tune ได้ 0.20 -> ลดลงให้จับตำหนิได้มากขึ้น (พลาดการ์ดมีตำหนิ = ความเสียหายหลัก)
+  #   test @0.20 recall 0.939 precision 0.939 specificity 0.767 | @0.15 recall 0.957 precision 0.932 specificity 0.733
+  threshold: 0.15
 
 slo:
   # วัดที่ API (end-to-end) ต่อ 1 instance ที่โหลดไม่เกิน concurrency นี้; โหลดมากกว่านี้ -> เพิ่มจำนวน instance

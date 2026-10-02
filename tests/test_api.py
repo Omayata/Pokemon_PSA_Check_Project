@@ -36,7 +36,14 @@ def test_predict_ok_and_logged(client, tmp_path):
     assert r.status_code == 200
     body = r.json()
     assert body["verdict"] == "defective" and body["n_defects"] == 1 and body["defect_probability"] == 0.8
+    assert len(body["image_size"]) == 2  # หน้าเว็บใช้แปลงพิกัด box เป็น %
     assert (tmp_path / "predictions.jsonl").read_text().count("\n") == 1
+
+
+def test_web_page_served(client):
+    r = client.get("/")
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    assert "/predict" in r.text
 
 
 def test_predict_rejects_bad_input(client):
@@ -69,3 +76,30 @@ def test_metrics_exposed(client):
     client.post("/predict", files={"file": ("c.jpg", jpeg_bytes(card_image()), "image/jpeg")})
     text = client.get("/metrics").text
     assert "psa_request_latency_seconds" in text and "psa_predicted_verdict_total" in text
+
+
+def test_predict_with_other_version_is_loaded_once_and_cached(client, params, monkeypatch):
+    loads = []
+    monkeypatch.setattr(main, "_approved_versions", lambda: [type("V", (), {"version": "2"})])
+    monkeypatch.setattr(main, "_load_version", lambda v: loads.append(v) or FakePredictor(params))
+    files = {"file": ("c.jpg", jpeg_bytes(card_image()), "image/jpeg")}
+    for _ in range(2):
+        r = client.post("/predict?version=2", files=files)
+        assert r.status_code == 200 and r.json()["model_version"] == "2"
+    assert loads == ["2"]  # โหลดครั้งเดียว ครั้งต่อไปใช้ cache
+    assert client.post("/predict", files=files).json()["model_version"] == "1"  # ไม่ระบุ = champion
+    main.state.others.clear()
+
+
+def test_predict_unapproved_version_404(client, monkeypatch):
+    monkeypatch.setattr(main, "_approved_versions", lambda: [])
+    r = client.post("/predict?version=8", files={"file": ("c.jpg", jpeg_bytes(card_image()), "image/jpeg")})
+    assert r.status_code == 404
+
+
+def test_models_registry_unavailable_503(client, monkeypatch):
+    def down():
+        raise ConnectionError("mlflow down")
+
+    monkeypatch.setattr(main, "_approved_versions", down)
+    assert client.get("/models").status_code == 503

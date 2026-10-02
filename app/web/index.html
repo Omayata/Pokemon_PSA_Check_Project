@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card Condition Check</title>
+<style>
+  :root {
+    --frame: #f7c948;        /* กรอบเหลืองของการ์ด */
+    --frame-deep: #e0a800;
+    --paper: #fffdf5;
+    --ink: #1f2430;
+    --muted: #6b7080;
+    --line: #ece6d2;
+    --blue: #2a75bb;         /* น้ำเงินโลโก้ */
+    --good: #2e9d5b;
+    --good-bg: #e6f5ec;
+    --bad: #d63a2f;
+    --bad-bg: #fcebe9;
+    --page: #f3f5f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #1d212b; --ink: #eef0f5; --muted: #9aa0b0; --line: #2e3443;
+      --good-bg: #173426; --bad-bg: #3a1c1a; --page: #12151c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #1d212b; --ink: #eef0f5; --muted: #9aa0b0; --line: #2e3443;
+    --good-bg: #173426; --bad-bg: #3a1c1a; --page: #12151c;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px 16px;
+    background: var(--page); color: var(--ink);
+    font: 15px/1.55 "Noto Sans Thai", "Leelawadee UI", "Segoe UI", system-ui, sans-serif;
+  }
+
+  /* ตัวการ์ด: กรอบเหลือง + พื้นในสีครีม */
+  .card {
+    width: 100%; max-width: 420px; padding: 12px; border-radius: 22px;
+    background: linear-gradient(145deg, var(--frame), var(--frame-deep));
+    box-shadow: 0 12px 32px rgba(20, 24, 40, .14);
+  }
+  .inner { background: var(--paper); border-radius: 12px; padding: 20px; }
+
+  header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+  h1 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: .2px; }
+  h1 span { color: var(--blue); }
+  .hp { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .model-select {
+    font: inherit; font-size: 12px; color: var(--muted); background: transparent; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 99px; padding: 3px 8px; max-width: 60%;
+  }
+  .model-select:hover, .model-select:focus { border-color: var(--blue); color: var(--ink); outline: none; }
+  .model-select option { background: var(--paper); color: var(--ink); }
+
+  .drop {
+    position: relative; display: grid; place-items: center; aspect-ratio: 63 / 88;
+    border: 2px dashed var(--line); border-radius: 10px; cursor: pointer; overflow: hidden;
+    transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 5%, transparent); }
+  .drop.has-image { border-style: solid; cursor: default; }
+  .hint { text-align: center; color: var(--muted); padding: 24px; }
+  .hint b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 4px; }
+  .ball {
+    width: 40px; height: 40px; margin: 0 auto 12px; border-radius: 50%; border: 3px solid var(--ink);
+    background: linear-gradient(var(--bad) 0 46%, var(--ink) 46% 54%, var(--paper) 54%); position: relative;
+  }
+  .ball::after {
+    content: ""; position: absolute; inset: 50% auto auto 50%; width: 12px; height: 12px;
+    transform: translate(-50%, -50%); border-radius: 50%; background: var(--paper); border: 3px solid var(--ink);
+  }
+
+  .stage { position: relative; display: none; max-width: 100%; max-height: 100%; }
+  .drop.has-image .stage { display: block; }
+  .drop.has-image .hint { display: none; }
+  .stage img { display: block; max-width: 100%; max-height: 100%; border-radius: 6px; }
+  .box { position: absolute; border: 2px solid var(--bad); border-radius: 3px; pointer-events: none; }
+  .box i {
+    position: absolute; left: -2px; bottom: 100%; padding: 0 4px; font: 600 10px/16px system-ui, sans-serif;
+    font-style: normal; color: #fff; background: var(--bad); border-radius: 3px 3px 0 0; white-space: nowrap;
+  }
+  .box.right i { left: auto; right: -2px; }                       /* กรอบชิดขอบขวา -> ป้ายไม่ล้นออกนอกภาพ */
+  .box.top i { bottom: auto; top: 100%; border-radius: 0 0 3px 3px; } /* กรอบชิดขอบบน -> ป้ายอยู่ใต้กรอบ */
+  .scan {
+    position: absolute; inset: 0; display: none; place-items: center;
+    background: color-mix(in srgb, var(--paper) 55%, transparent); font-weight: 600;
+  }
+  .busy .scan { display: grid; }
+
+  .result { margin-top: 16px; display: none; }
+  .result.show { display: block; }
+  .verdict {
+    display: flex; align-items: center; justify-content: space-between; padding: 12px 14px;
+    border-radius: 10px; font-weight: 700; font-size: 17px;
+  }
+  .verdict.good { background: var(--good-bg); color: var(--good); }
+  .verdict.defective { background: var(--bad-bg); color: var(--bad); }
+  .verdict small { font-weight: 500; font-size: 13px; opacity: .85; font-variant-numeric: tabular-nums; }
+
+  .meter { margin: 14px 2px 4px; }
+  .meter-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .bar { position: relative; height: 8px; border-radius: 99px; background: var(--line); margin-top: 6px; }
+  .fill { height: 100%; border-radius: 99px; background: var(--blue); width: 0; transition: width .4s ease; }
+  .tick { position: absolute; top: -4px; width: 2px; height: 16px; background: var(--ink); opacity: .55; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip { padding: 3px 10px; border-radius: 99px; font-size: 13px; background: var(--bad-bg); color: var(--bad); }
+
+  .feedback { display: flex; align-items: center; gap: 8px; margin-top: 16px; font-size: 13px; color: var(--muted); }
+  .feedback[hidden] { display: none; }
+  .feedback button, .again {
+    font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 99px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--ink);
+  }
+  .feedback button:hover, .again:hover { border-color: var(--blue); color: var(--blue); }
+  .again { display: block; width: 100%; margin-top: 14px; padding: 9px; font-weight: 600; }
+
+  .error { margin-top: 14px; padding: 10px 12px; border-radius: 10px; background: var(--bad-bg); color: var(--bad);
+           font-size: 14px; display: none; }
+  .error.show { display: block; }
+
+  footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted);
+           display: flex; justify-content: space-between; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  .dot.on { background: var(--good); }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="inner">
+    <header>
+      <h1>Card <span>Check</span></h1>
+      <div class="hp" id="hp">good / defective</div>
+      <select class="model-select" id="model" aria-label="เลือกโมเดล" hidden></select>
+    </header>
+
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="image/jpeg,image/png,image/webp">
+      <div class="hint">
+        <div class="ball"></div>
+        <b>อัปโหลดรูปการ์ด</b>
+        ลากไฟล์มาวาง หรือคลิกเพื่อเลือกรูป<br>ถ่ายตรง ๆ ให้เห็นทั้งใบ
+      </div>
+      <div class="stage" id="stage"><img id="preview" alt="รูปการ์ดที่อัปโหลด"></div>
+      <div class="scan">กำลังตรวจ…</div>
+    </label>
+
+    <div class="error" id="error"></div>
+
+    <section class="result" id="result">
+      <div class="verdict" id="verdict"></div>
+      <div class="meter">
+        <div class="meter-label"><span>โอกาสมีตำหนิ</span><span id="prob"></span></div>
+        <div class="bar"><div class="fill" id="fill"></div><div class="tick" id="tick" title="เกณฑ์ตัดสิน"></div></div>
+      </div>
+      <div class="chips" id="chips"></div>
+      <div class="feedback" id="feedback" hidden>
+        ผลถูกไหม?
+        <button data-label="good">การ์ดดี</button>
+        <button data-label="defective">มีตำหนิ</button>
+      </div>
+      <button class="again" id="again">ตรวจใบอื่น</button>
+    </section>
+
+    <footer>
+      <span><span class="dot" id="dot"></span><span id="status">กำลังเชื่อมต่อ…</span></span>
+      <span id="latency"></span>
+    </footer>
+  </div>
+</main>
+
+<script>
+  const DEFECT_TH = {
+    "corner wear": "มุมสึก", "edge wear": "ขอบสึก", "scratch": "รอยขีดข่วน", "crease": "รอยพับ",
+    "dent": "รอยบุบ", "ink loss": "หมึกหลุด", "delamination": "ชั้นกระดาษลอก",
+  };
+  const FEEDBACK_ENABLED = true;  // ปุ่ม "ผลถูกไหม?" ปิดไว้ก่อน (เปิด = true)
+  const $ = (id) => document.getElementById(id);
+  const drop = $("drop"), stage = $("stage"), preview = $("preview");
+  let lastRequestId = null;
+  let lastFile = null;
+
+  async function checkHealth() {
+    try {
+      const h = await (await fetch("/health")).json();
+      $("dot").classList.toggle("on", h.model_loaded);
+      const v = /^\d+$/.test(h.model_version) ? `v${h.model_version}` : h.model_version;
+      $("status").textContent = h.model_loaded ? `โมเดล ${v}` : "ยังไม่มีโมเดล";
+    } catch {
+      $("status").textContent = "เชื่อมต่อ API ไม่ได้";
+    }
+  }
+
+  // รายชื่อโมเดลที่ผ่าน gate จาก registry (มีตัวเดียวหรือ registry ล่ม -> ไม่แสดงตัวเลือก ใช้ champion)
+  async function loadModels() {
+    try {
+      const res = await fetch("/models");
+      if (!res.ok) return;
+      const { models } = await res.json();
+      if (models.length < 2) return;
+      const sel = $("model");
+      sel.innerHTML = "";
+      models.forEach((m) => {
+        const opt = document.createElement("option");
+        opt.value = m.champion ? "" : m.version;  // ว่าง = champion (ตามที่ API ใช้อยู่ แม้ภายหลังเปลี่ยนตัว)
+        const f1 = typeof m.test_f1 === "number" ? ` · F1 ${m.test_f1.toFixed(2)}` : "";
+        opt.textContent = `v${m.version}${m.champion ? " (หลัก)" : ""}${f1}`;
+        sel.append(opt);
+      });
+      sel.hidden = false;
+      $("hp").hidden = true;
+    } catch {
+      // ไม่มีตัวเลือก -> ใช้ champion ตามปกติ
+    }
+  }
+
+  function showError(msg) { $("error").textContent = msg; $("error").classList.add("show"); }
+
+  function reset() {
+    drop.classList.remove("has-image", "busy");
+    stage.querySelectorAll(".box").forEach((b) => b.remove());
+    $("result").classList.remove("show");
+    $("error").classList.remove("show");
+    $("file").value = "";
+    lastRequestId = null;
+  }
+
+  function errorMessage(status, body) {
+    const d = body && body.detail;
+    if (status === 422 && d && d.errors) return "รูปนี้ใช้ไม่ได้: " + d.errors.join(", ");
+    if (status === 503 && d === "model not loaded") return "ยังไม่มีโมเดลพร้อมให้บริการ ลองใหม่อีกครั้ง";
+    if (status === 404) return "ไม่พบโมเดลเวอร์ชันนี้แล้ว ลองเลือกตัวอื่น";
+    return typeof d === "string" ? d : `ตรวจไม่สำเร็จ (HTTP ${status})`;
+  }
+
+  async function analyze(file) {
+    if (!file || !file.type.startsWith("image/")) return showError("กรุณาเลือกไฟล์รูปภาพ");
+    reset();
+    lastFile = file;
+    preview.src = URL.createObjectURL(file);
+    drop.classList.add("has-image", "busy");
+
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const version = $("model").value;
+      const url = version ? `/predict?version=${encodeURIComponent(version)}` : "/predict";
+      const res = await fetch(url, { method: "POST", body: form });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) return showError(errorMessage(res.status, body));
+      render(body);
+    } catch {
+      showError("เชื่อมต่อ API ไม่ได้");
+    } finally {
+      drop.classList.remove("busy");
+    }
+  }
+
+  function render(r) {
+    lastRequestId = r.request_id;
+    const good = r.verdict === "good";
+    const pct = (v) => `${Math.round(v * 100)}%`;
+    $("verdict").className = `verdict ${r.verdict}`;
+    $("verdict").innerHTML = good
+      ? "สภาพดี <small>ไม่พบตำหนิ</small>"
+      : `มีตำหนิ <small>พบ ${r.n_defects} จุด</small>`;
+    $("prob").textContent = `${pct(r.defect_probability)} · เกณฑ์ ${pct(r.threshold)}`;
+    $("fill").style.width = pct(r.defect_probability);
+    $("fill").style.background = good ? "var(--good)" : "var(--bad)";
+    $("tick").style.left = `calc(${pct(r.threshold)} - 1px)`;
+
+    $("chips").innerHTML = "";
+    Object.entries(r.defect_counts).filter(([, n]) => n > 0).forEach(([name, n]) => {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = `${DEFECT_TH[name] || name} ×${n}`;
+      $("chips").append(chip);
+    });
+
+    // พิกัดกรอบอยู่บนภาพที่ API ย่อแล้ว (image_size) -> แปลงเป็น % ให้ตรงกับภาพที่แสดงทุกขนาด
+    const [w, h] = r.image_size;
+    r.defects.forEach((d) => {
+      const [x1, y1, x2, y2] = d.box;
+      const box = document.createElement("div");
+      box.className = "box";
+      box.classList.toggle("right", x1 / w > 0.6);
+      box.classList.toggle("top", y1 / h < 0.05);
+      Object.assign(box.style, {
+        left: `${(x1 / w) * 100}%`, top: `${(y1 / h) * 100}%`,
+        width: `${((x2 - x1) / w) * 100}%`, height: `${((y2 - y1) / h) * 100}%`,
+      });
+      const tag = document.createElement("i");
+      tag.textContent = `${DEFECT_TH[d.cls] || d.cls} ${pct(d.confidence)}`;
+      box.append(tag);
+      stage.append(box);
+    });
+
+    $("feedback").hidden = !FEEDBACK_ENABLED;
+    $("feedback").innerHTML = 'ผลถูกไหม? <button data-label="good">การ์ดดี</button>'
+      + '<button data-label="defective">มีตำหนิ</button>';
+    $("latency").textContent = `${Math.round(r.latency_ms)} ms`;
+    $("status").textContent = `ตรวจด้วยโมเดล v${r.model_version}`;
+    $("result").classList.add("show");
+  }
+
+  $("file").addEventListener("change", (e) => analyze(e.target.files[0]));
+  drop.addEventListener("click", (e) => { if (drop.classList.contains("has-image")) e.preventDefault(); });
+  ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => {
+    e.preventDefault(); drop.classList.add("over");
+  }));
+  ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, () => drop.classList.remove("over")));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); analyze(e.dataTransfer.files[0]); });
+  $("again").addEventListener("click", () => { reset(); lastFile = null; $("file").click(); });
+  // เปลี่ยนโมเดลตอนมีรูปอยู่ -> ตรวจรูปเดิมซ้ำด้วยโมเดลใหม่ (เทียบผลระหว่างเวอร์ชันได้ทันที)
+  $("model").addEventListener("change", () => { if (lastFile) analyze(lastFile); });
+
+  // ผลตรวจจริงจากผู้ใช้ -> /feedback ใช้ตรวจ concept drift
+  $("feedback").addEventListener("click", async (e) => {
+    const label = e.target.dataset && e.target.dataset.label;
+    if (!label || !lastRequestId) return;
+    try {
+      await fetch("/feedback", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: lastRequestId, true_label: label }),
+      });
+      $("feedback").textContent = "ขอบคุณสำหรับ feedback";
+    } catch {
+      $("feedback").textContent = "ส่ง feedback ไม่สำเร็จ";
+    }
+  });
+
+  checkHealth();
+  loadModels();
+</script>
+</body>
+</html>
