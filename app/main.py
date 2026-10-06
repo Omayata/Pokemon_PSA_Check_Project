@@ -3,7 +3,9 @@
 Serving pattern: Cascade แบบ real-time (Stage 1 YOLO หาตำหนิ -> Stage 2 ตัดสิน good/defective)
 + /predict/batch สำหรับผู้ขายที่ส่งการ์ดหลายใบพร้อมกัน
 
-Endpoints: /predict /predict/batch /feedback /health /ready /metrics /monitoring/drift /admin/reload
+Endpoints: / (หน้าเว็บอัปโหลดรูป) /models /predict /predict/batch /feedback /health /ready /metrics
+           /monitoring/drift /admin/reload
+/predict?version=N ใช้ model version อื่นใน registry ได้ (ไม่ระบุ = champion)
 """
 
 import json
@@ -12,12 +14,14 @@ import os
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import FileResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel
 
@@ -31,6 +35,8 @@ logger = logging.getLogger("api")
 PARAMS = load_params()
 LOG_DIR = Path(os.getenv("LOG_DIR", PARAMS["monitoring"]["log_dir"]))
 MAX_BATCH = 16
+MAX_CACHED_MODELS = 3  # version อื่นที่ผู้ใช้เลือก: เก็บในหน่วยความจำไม่เกินเท่านี้ (yolov8n ~6MB/ตัว)
+WEB_DIR = Path(__file__).parent / "web"
 
 # ---------------------------------------------------------------- metrics
 REQUEST_LATENCY = Histogram(
@@ -61,6 +67,7 @@ class ModelState:
         self.source: str | None = None
         self.loaded_at: str | None = None
         self.lock = threading.Lock()
+        self.others: OrderedDict[str, object] = OrderedDict()  # version อื่นที่ผู้ใช้เลือก -> Predictor (LRU)
 
 
 state = ModelState()
@@ -72,30 +79,44 @@ INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="infer
 STARTED = time.time()
 
 
+def _apply_serving_threshold(predictor) -> None:
+    override = PARAMS["serving"].get("threshold")
+    if override is not None:  # เกณฑ์ของฝั่ง serving ทับค่าที่ tune มากับโมเดล (ใช้กับทุก version)
+        predictor.params["classifier"]["threshold"] = override
+
+
+def _load_version(version: str):
+    """โหลด model version จาก MLflow Registry -> Predictor"""
+    import mlflow
+    import yaml
+
+    from src.models.predictor import Predictor
+
+    uri = f"models:/{PARAMS['registry']['model_name']}/{version}"
+    # ดาวน์โหลดไฟล์ของโมเดลแล้วอ่านเอง แทน mlflow.pyfunc.load_model เพราะ
+    # (1) โมเดลที่ log จาก Windows เก็บ path แบบ "\" ซึ่ง Linux หาไม่เจอ
+    # (2) ใช้โค้ด src/ ของ image นี้ ไม่ใช่โค้ดเก่าที่ถูกแนบมากับโมเดล
+    art = Path(mlflow.artifacts.download_artifacts(artifact_uri=uri)) / "artifacts"
+    params = yaml.safe_load((art / "params_snapshot.yaml").read_text(encoding="utf-8"))
+    # โมเดลรุ่นเก่า (ก่อนเปลี่ยนเป็น good/defective) ไม่มีค่าเหล่านี้ -> ใช้ค่าจาก config ปัจจุบัน
+    params.setdefault("serving", PARAMS["serving"])
+    params.setdefault("classifier", PARAMS["classifier"])
+    reference = json.loads((art / "reference_stats.json").read_text(encoding="utf-8"))
+    predictor = Predictor(next(art.glob("*.pt")), params, reference)
+    _apply_serving_threshold(predictor)
+    return predictor
+
+
 def load_model() -> None:
     """โหลด champion จาก MLflow Registry; ถ้าไม่ได้ ใช้ MODEL_PATH (ไฟล์ weights) แทน"""
     reg = PARAMS["registry"]
     predictor, version, source = None, None, None
     try:
-        import mlflow
-        import yaml
         from mlflow import MlflowClient
 
-        from src.models.predictor import Predictor
-
         mv = MlflowClient().get_model_version_by_alias(reg["model_name"], reg["champion_alias"])
-        uri = f"models:/{reg['model_name']}/{mv.version}"
-        # ดาวน์โหลดไฟล์ของโมเดลแล้วอ่านเอง แทน mlflow.pyfunc.load_model เพราะ
-        # (1) โมเดลที่ log จาก Windows เก็บ path แบบ "\" ซึ่ง Linux หาไม่เจอ
-        # (2) ใช้โค้ด src/ ของ image นี้ ไม่ใช่โค้ดเก่าที่ถูกแนบมากับโมเดล
-        art = Path(mlflow.artifacts.download_artifacts(artifact_uri=uri)) / "artifacts"
-        params = yaml.safe_load((art / "params_snapshot.yaml").read_text(encoding="utf-8"))
-        # โมเดลรุ่นเก่า (ก่อนเปลี่ยนเป็น good/defective) ไม่มีค่าเหล่านี้ -> ใช้ค่าจาก config ปัจจุบัน
-        params.setdefault("serving", PARAMS["serving"])
-        params.setdefault("classifier", PARAMS["classifier"])
-        reference = json.loads((art / "reference_stats.json").read_text(encoding="utf-8"))
-        predictor = Predictor(next(art.glob("*.pt")), params, reference)
-        version, source = str(mv.version), uri
+        predictor = _load_version(str(mv.version))
+        version, source = str(mv.version), f"models:/{reg['model_name']}/{mv.version}"
     except Exception as e:
         logger.warning("โหลดจาก MLflow ไม่ได้: %s", e)
         model_path = os.getenv("MODEL_PATH")
@@ -103,12 +124,51 @@ def load_model() -> None:
             from src.models.predictor import Predictor
 
             predictor, version, source = Predictor(model_path, PARAMS), "local", model_path
+            _apply_serving_threshold(predictor)
     with state.lock:
         state.predictor, state.version, state.source = predictor, version, source
         state.loaded_at = datetime.now(UTC).isoformat() if predictor else None
+        state.others.clear()
     MODEL_LOADED.set(1 if predictor else 0)
     MODEL_VERSION.set(float(version) if version and version.isdigit() else 0)
     logger.info("model loaded: version=%s source=%s", version, source)
+
+
+def _approved_versions() -> list:
+    """version ที่ผ่าน gate (status=approved) ใหม่สุดก่อน -> ผู้ใช้เลือกได้เฉพาะตัวที่ผ่านเกณฑ์"""
+    from mlflow import MlflowClient
+
+    versions = MlflowClient().search_model_versions(f"name='{PARAMS['registry']['model_name']}'")
+    return sorted((v for v in versions if v.tags.get("status") == "approved"), key=lambda v: -int(v.version))
+
+
+def _get_predictor(version: str | None):
+    """None หรือ champion -> ตัวหลัก; version อื่น -> โหลดครั้งแรกแล้ว cache แบบ LRU"""
+    with state.lock:
+        if state.predictor is None:
+            raise HTTPException(503, "model not loaded")
+        if version is None or version == state.version:
+            return state.predictor, state.version
+        if version in state.others:
+            state.others.move_to_end(version)
+            return state.others[version], version
+    try:
+        approved = {str(v.version) for v in _approved_versions()}
+    except Exception as e:
+        logger.warning("อ่าน registry ไม่ได้: %s", e)
+        raise HTTPException(503, "model registry unavailable") from e
+    if version not in approved:
+        raise HTTPException(404, f"model version {version} not found or not approved")
+    try:
+        predictor = _load_version(version)
+    except Exception as e:
+        logger.warning("โหลด version %s ไม่ได้: %s", version, e)
+        raise HTTPException(503, f"cannot load model version {version}") from e
+    with state.lock:
+        state.others[version] = predictor
+        while len(state.others) > MAX_CACHED_MODELS:
+            state.others.popitem(last=False)
+    return predictor, version
 
 
 @asynccontextmanager
@@ -126,7 +186,7 @@ async def metrics_middleware(request: Request, call_next):
     t0 = time.perf_counter()
     response = await call_next(request)
     endpoint = request.url.path
-    if endpoint not in {"/metrics", "/health"}:
+    if endpoint not in {"/", "/metrics", "/health"}:  # หน้าเว็บ/scrape ไม่นับใน latency ของ API
         REQUEST_LATENCY.labels(endpoint).observe(time.perf_counter() - t0)
         REQUESTS.labels(endpoint, str(response.status_code)).inc()
     return response
@@ -137,16 +197,15 @@ def _append_jsonl(name: str, record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def _predict_bytes(data: bytes, filename: str | None) -> dict:
+def _predict_bytes(data: bytes, filename: str | None, version: str | None = None) -> dict:
     """validate -> transform (ชุดเดียวกับตอนเทรน) -> Stage 1 + Stage 2 -> log"""
-    if state.predictor is None:
-        raise HTTPException(503, "model not loaded")
-    request_id = uuid.uuid4().hex
     t0 = time.perf_counter()
-    return INFERENCE_EXECUTOR.submit(_predict_on_worker, data, filename, request_id, t0).result()
+    predictor, version = _get_predictor(version)
+    request_id = uuid.uuid4().hex
+    return INFERENCE_EXECUTOR.submit(_predict_on_worker, data, filename, request_id, t0, predictor, version).result()
 
 
-def _predict_on_worker(data: bytes, filename: str | None, request_id: str, t0: float) -> dict:
+def _predict_on_worker(data: bytes, filename: str | None, request_id: str, t0: float, predictor, version) -> dict:
     try:
         validate_upload(data, PARAMS["schema"])
     except DataValidationError as e:
@@ -156,8 +215,6 @@ def _predict_on_worker(data: bytes, filename: str | None, request_id: str, t0: f
                                    "errors": e.errors}))
         raise HTTPException(422, {"message": str(e), "errors": e.errors, "request_id": request_id}) from e
 
-    with state.lock:
-        predictor, version = state.predictor, state.version
     # ใช้ค่า transform ที่บันทึกไว้กับโมเดลตัวนี้ (ไม่ใช่ config ของ image) -> ตรงกับตอนเทรนเสมอ
     img = load_image(data, max_side=predictor.params["transform"]["max_side"])
     stats = image_stats(img)
@@ -177,10 +234,18 @@ def _predict_on_worker(data: bytes, filename: str | None, request_id: str, t0: f
         "prediction": {k: result[k] for k in ("verdict", "defect_probability", "n_defects")},
         "latency_ms": round(latency_ms, 2),
     })
-    return {"request_id": request_id, "model_version": version, "latency_ms": round(latency_ms, 2), **result}
+    # image_size = ขนาดภาพหลัง transform: พิกัด box อยู่บนภาพนี้ (ไม่ใช่ภาพต้นฉบับ)
+    return {"request_id": request_id, "model_version": version, "latency_ms": round(latency_ms, 2),
+            "image_size": [img.width, img.height], **result}
 
 
 # ---------------------------------------------------------------- endpoints
+@app.get("/", include_in_schema=False)
+def index():
+    """หน้าเว็บอัปโหลดรูปการ์ด -> เรียก /predict (origin เดียวกัน ไม่ต้องตั้ง CORS)"""
+    return FileResponse(WEB_DIR / "index.html")
+
+
 @app.get("/health")
 def health():
     """liveness: process ยังทำงาน (ตอบ 200 เสมอ พร้อมบอกสถานะโมเดล)"""
@@ -202,19 +267,43 @@ def ready():
     return {"ready": True, "model_version": state.version}
 
 
+@app.get("/models")
+def list_models():
+    """model version ที่ผ่าน gate ให้หน้าเว็บเลือก (champion = ตัวที่ใช้เมื่อไม่ระบุ version)"""
+    try:
+        from mlflow import MlflowClient
+
+        client = MlflowClient()
+        models = []
+        for v in _approved_versions():
+            run = client.get_run(v.run_id).data
+            models.append({
+                "version": str(v.version),
+                "champion": str(v.version) == state.version,
+                "name": run.tags.get("mlflow.runName"),
+                "imgsz": run.params.get("imgsz"),
+                "test_f1": run.metrics.get("test_img_f1"),
+                "test_roc_auc": run.metrics.get("test_img_roc_auc"),
+            })
+    except Exception as e:
+        logger.warning("อ่าน registry ไม่ได้: %s", e)
+        raise HTTPException(503, "model registry unavailable") from e
+    return {"champion": state.version, "models": models}
+
+
 @app.post("/predict")
-def predict(file: UploadFile = File(...)):
-    return _predict_bytes(file.file.read(), file.filename)
+def predict(file: UploadFile = File(...), version: str | None = Query(None, description="ไม่ระบุ = champion")):
+    return _predict_bytes(file.file.read(), file.filename, version)
 
 
 @app.post("/predict/batch")
-def predict_batch(files: list[UploadFile] = File(...)):
+def predict_batch(files: list[UploadFile] = File(...), version: str | None = Query(None)):
     if len(files) > MAX_BATCH:
         raise HTTPException(413, f"max {MAX_BATCH} files per batch")
     results = []
     for f in files:
         try:
-            results.append({"file": f.filename, **_predict_bytes(f.file.read(), f.filename)})
+            results.append({"file": f.filename, **_predict_bytes(f.file.read(), f.filename, version)})
         except HTTPException as e:
             results.append({"file": f.filename, "error": e.detail, "status_code": e.status_code})
     return {"n": len(results), "results": results}

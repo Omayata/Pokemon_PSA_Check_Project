@@ -26,6 +26,7 @@
 │   └── alerts.py                log + webhook
 ├── pipelines/flow.py            Prefect DAG: train / monitor
 ├── app/main.py                  FastAPI
+├── app/web/index.html          หน้าเว็บอัปโหลดรูปการ์ด (เสิร์ฟที่ / เรียก /predict)
 ├── scripts/                     load test, จำลอง drift, ข้อมูลเสีย, gate สำหรับ CI
 ├── tests/                       pytest
 ├── monitoring/                  Prometheus (alert rules) + Grafana dashboard
@@ -65,6 +66,7 @@ docker compose up -d --build                         # เปิด MLflow, Pref
 
 | URL | ใช้ทำอะไร |
 |---|---|
+| http://localhost:8000 | หน้าเว็บ: อัปโหลดรูปการ์ด -> ผล good / defective + กรอบตำหนิ |
 | http://localhost:8000/docs | ทดลองเรียก API |
 | http://localhost:5000 | MLflow: เทียบ experiment / registry |
 | http://localhost:4200 | Prefect: ดู DAG และประวัติการรัน |
@@ -101,6 +103,7 @@ pip install -r requirements-dev.txt -c constraints.txt
 | Data drift (ภาพมืด) | `python scripts/simulate_drift.py data --kind dark --n 100` |
 | Concept drift (มาตรฐานสภาพดีเข้มขึ้น) | `python scripts/simulate_drift.py concept --n 120` |
 | ตรวจ drift -> retrain อัตโนมัติ | `docker compose run --rm trainer python -m pipelines.flow monitor` |
+| เทียบ model version บนข้อมูลชุดเดียวกัน | `python scripts/compare_versions.py --versions 8 9 11 [--serving-threshold]` |
 | ดู registry | `docker compose run --rm trainer python -m src.registry.promote list` |
 | Rollback | `docker compose run --rm trainer python -m src.registry.promote rollback` |
 | Tests / lint | `pytest -v` / `ruff check .` |

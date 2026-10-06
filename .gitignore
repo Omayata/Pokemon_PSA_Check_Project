@@ -15,6 +15,7 @@ reports/*
 !reports/.gitkeep
 !reports/candidate_metrics.json
 !reports/load_test.json
+!reports/version_comparison*.json
 
 # python
 __pycache__/
