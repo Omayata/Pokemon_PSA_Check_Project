@@ -103,6 +103,7 @@ pip install -r requirements-dev.txt -c constraints.txt
 | Data drift (ภาพมืด) | `python scripts/simulate_drift.py data --kind dark --n 100` |
 | Concept drift (มาตรฐานสภาพดีเข้มขึ้น) | `python scripts/simulate_drift.py concept --n 120` |
 | ตรวจ drift -> retrain อัตโนมัติ | `docker compose run --rm trainer python -m pipelines.flow monitor` |
+| เทียบ model version บนข้อมูลชุดเดียวกัน | `python scripts/compare_versions.py --versions 8 9 11 [--serving-threshold]` |
 | ดู registry | `docker compose run --rm trainer python -m src.registry.promote list` |
 | Rollback | `docker compose run --rm trainer python -m src.registry.promote rollback` |
 | Tests / lint | `pytest -v` / `ruff check .` |
