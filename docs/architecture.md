@@ -12,13 +12,13 @@ flowchart LR
     end
 
     subgraph Train["Training (Prefect DAG)"]
-        V2 -->|yes| T1[baseline yolov8n] & T2[yolov8n + aug] & T3[yolov8s + aug]
-        T1 & T2 & T3 --> SEL[select best<br/>by val F1, image level]
+        V2 -->|yes| T1[baseline yolov8n<br/>no aug] & T2[yolov8n + aug]
+        T1 & T2 --> SEL[select best<br/>by val F1, image level]
         SEL --> GATE{gates on test set<br/>recall, precision, AUC,<br/>latency, size}
     end
 
     subgraph Registry["MLflow"]
-        T1 & T2 & T3 -.->|code, data version, params,<br/>metrics, artifacts, env| TRACK[(Tracking)]
+        T1 & T2 -.->|code, data version, params,<br/>metrics, artifacts, env| TRACK[(Tracking)]
         GATE -->|pass| CH[registry<br/>alias: champion]
         GATE -->|fail| REJ[registry<br/>status: rejected]
         CH -.->|rollback| PREV[alias: previous]

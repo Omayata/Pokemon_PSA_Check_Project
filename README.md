@@ -1,11 +1,35 @@
 # Pokemon Card Condition Check — MLOps Project
 
-ระบบประเมินสภาพการ์ดโปเกม่อนจากรูปถ่าย: หาตำหนิ (scratch / edge wear / corner wear) ด้วย YOLOv8
-แล้วจำแนกการ์ดเป็น **good** (สภาพดี) หรือ **defective** (มีตำหนิ) ครบวงจร MLOps ตั้งแต่ข้อมูลดิบจนถึงการให้บริการและเฝ้าระวัง
+ระบบประเมินสภาพการ์ดโปเกม่อนจากรูปถ่าย: หาตำหนิ 7 ชนิด (corner wear, edge wear, scratch, crease, dent, ink loss,
+delamination) ด้วย YOLOv8 แล้วจำแนกการ์ดเป็น **good** (สภาพดี) หรือ **defective** (มีตำหนิ)
+ครบวงจร MLOps ตั้งแต่ข้อมูลดิบจนถึงการให้บริการและเฝ้าระวัง
 
 - สถาปัตยกรรม: [docs/architecture.md](docs/architecture.md)
+- อธิบายโค้ดทีละไฟล์ + การไหลของข้อมูล: [docs/code_structure.md](docs/code_structure.md)
 - AI Project Canvas, metrics, SLO, นโยบาย retrain: [docs/ai_project_canvas.md](docs/ai_project_canvas.md)
 - ค่าตั้งทั้งหมด (schema, gates, SLO, drift thresholds): [configs/params.yaml](configs/params.yaml)
+
+## ผลลัพธ์ล่าสุด
+
+โมเดลที่ใช้งาน (champion) = registry v11 `yolov8n_aug` (imgsz 640, threshold 0.15) เทรนบน dataset v2
+ที่รวม 2 source จาก Roboflow: `card-grader` v5 + `pokemon-card-defect-detection` v6 (train 3,215 · valid 203 · test 145 ภาพ)
+
+| ตัวชี้วัด (test set ระดับภาพ) | ผล | Gate |
+|---|---|---|
+| Recall (defective) | 0.965 | ≥ 0.90 |
+| Precision (defective) | 0.949 | ≥ 0.90 |
+| F1 (defective) | 0.957 | ไม่แย่กว่า champion เกิน 0.02 |
+| ROC-AUC | 0.983 | ≥ 0.90 |
+| Specificity (การ์ดดี 30 ใบ) | 0.80 | - |
+| Latency โมเดล p95 (CPU) | < 100 ms | ≤ 300 ms |
+| ขนาดโมเดล | 5.9 MB | ≤ 50 MB |
+
+API load test (concurrency 4): p50 341 ms, p95 437 ms, 11.3 req/s, error 0% ผ่าน SLO ทุกข้อ
+ที่มา: [reports/candidate_metrics.json](reports/candidate_metrics.json), [reports/version_comparison_serving.json](reports/version_comparison_serving.json), [reports/load_test.json](reports/load_test.json)
+
+ข้อจำกัดที่ต้องรู้: detector mAP50 รวมแค่ 0.11 (corner wear 0.53, class อื่น 0.01-0.11) ผลระดับภาพดีเพราะการ์ดมีตำหนิส่วนใหญ่มี corner wear
+/ การ์ดดีจากภายนอก 110 ใบ (ภาพ scan) โดนทักว่ามีตำหนิ 32% / ไม่ใช่เกรด PSA 1-10 และไม่ดู centering
+รายละเอียดใน [docs/ai_project_canvas.md](docs/ai_project_canvas.md)
 
 ## โครงสร้าง
 
@@ -23,14 +47,15 @@
 │   ├── models/predictor.py      Stage 1 + 2 และ MLflow pyfunc wrapper
 │   ├── registry/                gate, promote, rollback
 │   ├── monitoring/drift.py      data drift (PSI+KS) / concept drift (feedback)
+│   ├── monitoring/drift_sim.py  การแปลงภาพจำลอง drift (ใช้ทั้งสาธิตและเพิ่มข้อมูลตอน retrain)
 │   └── alerts.py                log + webhook
 ├── pipelines/flow.py            Prefect DAG: train / monitor
 ├── app/main.py                  FastAPI
 ├── app/web/index.html          หน้าเว็บอัปโหลดรูปการ์ด (เสิร์ฟที่ / เรียก /predict)
-├── scripts/                     load test, จำลอง drift, ข้อมูลเสีย, gate สำหรับ CI
+├── scripts/                     load test, จำลอง drift, ข้อมูลเสีย, gate สำหรับ CI, เทียบ version, การ์ดดีจากภายนอก
 ├── tests/                       pytest
 ├── monitoring/                  Prometheus (alert rules) + Grafana dashboard
-└── docs/
+└── docs/                        architecture, AI project canvas, code_structure (อธิบายทีละไฟล์)
 ```
 
 ## เริ่มจากเครื่องเปล่า
@@ -111,9 +136,10 @@ pip install -r requirements-dev.txt -c constraints.txt
 ## Reproducibility
 
 - ทุก dependency ถูก pin: `requirements.txt` (ตรง) + `constraints.txt` (lock ทั้งหมด)
-- ข้อมูล pin ที่ Roboflow version 5 + hash ของไฟล์ทุกไฟล์ (`data_version.json`) บันทึกลง MLflow
+- ข้อมูล pin ที่ Roboflow `card-grader` v5 + `pokemon-card-defect-detection` v6 + hash ของไฟล์ทุกไฟล์ (`data_version.json`) บันทึกลง MLflow
 - seed คงที่ (`seed: 42`) + `deterministic=True` ของ ultralytics
-- split train/valid/test ตายตัวตาม Roboflow version และตรวจ leakage ข้าม split ทุกครั้ง
+- split ตายตัว: `card-grader` ใช้ split ของ Roboflow, `pokemon-card-defect-detection` แบ่งใหม่ตามภาพต้นฉบับด้วย hash + seed
+  (สำเนา augment จากภาพเดียวกันอยู่ split เดียวกัน) และตรวจ leakage ข้าม split ทุกครั้ง
 
 ## Git workflow
 

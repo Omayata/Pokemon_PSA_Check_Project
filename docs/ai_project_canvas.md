@@ -1,18 +1,19 @@
 # AI Project Canvas — Pokemon Card Condition Check
 
-> ⚠️ Draft: ตัวเลขผลลัพธ์ให้อัปเดตจาก `reports/experiment_comparison.json` และ `reports/gate_report.json` ล่าสุดก่อนส่ง
+> ตัวเลขผลลัพธ์ตรงกับ `reports/candidate_metrics.json` และ `reports/version_comparison_serving.json` (champion = registry v11 `yolov8n_aug`)
 
 | Component | Details |
 |---|---|
 | **Problem** | ผู้ขาย/นักสะสมการ์ดโปเกม่อนต้องตรวจสภาพการ์ดก่อนส่งเกรด PSA (ค่าส่งประมาณ $25+ ต่อใบ รอหลายสัปดาห์) หรือก่อนตั้งราคาขาย การตรวจด้วยตาช้าและพลาดตำหนิเล็ก ๆ ได้ง่าย |
 | **Users / stakeholders** | ผู้ขายการ์ดมือสอง, ร้านการ์ด (ตรวจทีละหลายใบ), ผู้ซื้อออนไลน์ (เช็คก่อนซื้อ) |
-| **Value proposition** | อัปโหลดรูปการ์ด -> รู้ทันทีว่า **"สภาพดี" หรือ "มีตำหนิ"** พร้อมกรอบชี้ตำแหน่งตำหนิ (scratch / edge wear / corner wear) ช่วยคัดการ์ดที่คุ้มส่งเกรดและลดการตรวจด้วยตา |
+| **Value proposition** | อัปโหลดรูปการ์ด -> รู้ทันทีว่า **"สภาพดี" หรือ "มีตำหนิ"** พร้อมกรอบชี้ตำแหน่งตำหนิ 7 ชนิด (corner wear, edge wear, scratch, crease, dent, ink loss, delamination) ช่วยคัดการ์ดที่คุ้มส่งเกรดและลดการตรวจด้วยตา |
 | **Why ML, not rules** | ตำหนิมีรูปร่าง ขนาด ตำแหน่งไม่แน่นอนและเล็กมาก (6-25 px ในภาพ 416 px) การ์ด holo/full-art มีแสงสะท้อนและลายที่ดูคล้ายรอยขีด กฎแบบ threshold สี/ขอบแยกไม่ได้ ต้องใช้ object detection ที่เรียนจากตัวอย่าง |
 | **ML task** | Cascade: (1) YOLOv8 object detection 7 classes ตำหนิ (corner wear, edge wear, scratch, crease, dent, ink loss, delamination) -> (2) จำแนกระดับภาพ: `defect_probability` = confidence สูงสุดของตำหนิ, ถ้า >= threshold -> **defective** ไม่งั้น **good** (threshold เลือกบน valid set แล้วเก็บไปกับโมเดล) |
 | **Data** | **Dataset v2 = รวม 2 source จาก Roboflow (CC BY 4.0)**: (1) `group-6-major-project/card-grader` v5 — 1,504 ภาพ 416 px, มีการ์ดดี ~30%, class corner/edge wear, scratch (2) `hansraj-kumar/pokemon-card-defect-detection` v6 — 2,409 ภาพ 1280 px, เพิ่ม crease, dent, ink loss, delamination แต่การ์ดดีแค่ ~6% / map ชื่อ class ให้เป็นชุดกลาง ตัด class ที่มีใน source เดียว (Card, perfect edge/corner) และ label ขยะ / หลังรวม: train 3,215 · valid 203 · test 145 ภาพ (test มีการ์ดดี 30 ใบ, รอยพับ 9 ใบ) |
-| **Data risks** | ภาพต้นฉบับรวม ~1,400 < 5,000 และ train ถูก Roboflow augment 3 เท่า -> overfit ง่าย; test เล็ก (145 ภาพ) ตัวเลขแกว่งหลาย % / **source ต่างกันมาก (ความละเอียด, สัดส่วนการ์ดดี) -> เสี่ยงโมเดลเรียนทางลัด "ภาพแบบ source 1 = good"** / รับมือ: แบ่ง source 2 ใหม่ตามภาพต้นฉบับ (สำเนา augment อยู่ split เดียวกัน, valid/test เก็บภาพเดียวต่อต้นฉบับ), วัดผลแยกตาม source, transfer learning จาก COCO, เลือก threshold บน valid เท่านั้น, imgsz 832 |
+| **Data risks** | ภาพต้นฉบับรวม ~1,400 < 5,000 และ train ถูก Roboflow augment 3 เท่า -> overfit ง่าย; test เล็ก (145 ภาพ) ตัวเลขแกว่งหลาย % / **source ต่างกันมาก (ความละเอียด, สัดส่วนการ์ดดี) -> เสี่ยงโมเดลเรียนทางลัด "ภาพแบบ source 1 = good"** / รับมือ: แบ่ง source 2 ใหม่ตามภาพต้นฉบับ (สำเนา augment อยู่ split เดียวกัน, valid/test เก็บภาพเดียวต่อต้นฉบับ), วัดผลแยกตาม source, transfer learning จาก COCO, เลือก threshold บน valid เท่านั้น, imgsz 640 (ตำหนิ 6-13 px ในภาพ 416 ถูกขยายเป็น 9-20 px ยังใหญ่กว่า stride 8) |
 | **Optimizing metric** | F1 ของคลาส defective ระดับภาพ (เลือกโมเดลจาก valid set) |
 | **Gating metrics** | บน test set: recall(defective) >= 0.90, precision(defective) >= 0.90, ROC-AUC >= 0.90, p95 latency โมเดล <= 300 ms (CPU), ขนาด <= 50 MB, F1 แย่กว่า champion ไม่เกิน 0.02 |
+| **Results (v11, test 145 ภาพ, threshold 0.15)** | ระดับภาพ: recall 0.965 · precision 0.949 · F1 0.957 · ROC-AUC 0.983 · specificity 0.80 (TP 111 · FN 4 · FP 6 · TN 24) / แยก source: card-grader F1 0.946, defect-detection F1 0.964 / detector mAP50 0.11 (corner wear 0.53, class อื่น 0.01-0.11) / การ์ดดีจากภายนอก 110 ใบ (scan): false positive 32% / latency โมเดล p95 < 100 ms บน CPU, ขนาด 5.9 MB / API load test (concurrency 4): p50 341 ms, p95 437 ms, 11.3 req/s, error 0% |
 | **Supporting metrics** | mAP50 ของ detector ราย class (คุณภาพของกรอบที่แสดงให้ผู้ใช้), accuracy, specificity |
 | **Business metrics** | (1) อัตราที่ผลทายตรงกับผลตรวจจริงโดยคน (จาก `/feedback`) (2) จำนวนการ์ดมีตำหนิที่ถูกคัดออกก่อนส่งเกรด = ค่าเกรดที่ประหยัดได้ (3) เวลาตรวจต่อใบที่ลดลงเทียบกับตรวจด้วยตา |
 | **Link model -> business** | recall สูง -> การ์ดมีตำหนิหลุดไปส่งเกรดน้อย = ประหยัดค่าเกรด; precision/specificity สูง -> ไม่ตีการ์ดดีว่าเสีย = ผู้ขายไม่ตั้งราคาต่ำเกินจริง |
